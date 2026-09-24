@@ -1,32 +1,132 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# =========================
+# Go
+# =========================
+
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test binaries
 *.test
 
-# Code coverage profiles and other test artifacts
+# Coverage / profiling
 *.out
 coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+# Go workspace
 go.work
 go.work.sum
 
-# env file
-.env
+# Build output
+bin/
+dist/
 
-# Editor/IDE
-# .idea/
-# .vscode/
+
+# =========================
+# OpenTofu / Terraform
+# =========================
+
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local variable files may contain credentials/IPs
+*.tfvars
+*.tfvars.json
+
+# Local plan files
+*.tfplan
+tfplan
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Keep the provider lockfile!
+# .terraform.lock.hcl should be committed
+
+
+# =========================
+# Secrets / Credentials
+# =========================
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+secrets/
+credentials/
+
+
+# =========================
+# Kubernetes
+# =========================
+
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+
+# Local cluster configs containing credentials
+.kube/
+
+
+# =========================
+# Ansible
+# =========================
+
+*.retry
+
+# Local inventory/environment-specific values
+inventory.local.yml
+inventory.local.yaml
+host_vars/local/
+group_vars/local/
+
+
+# =========================
+# Proxmox / Lab-specific
+# =========================
+
+# Local lab configuration containing real addresses/tokens
+lab.local.yml
+lab.local.yaml
+proxmox.local.yml
+proxmox.local.yaml
+
+
+# =========================
+# Editors / IDE
+# =========================
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+
+# =========================
+# OS files
+# =========================
+
+.DS_Store
+Thumbs.db
