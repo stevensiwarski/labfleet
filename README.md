@@ -1,2 +1,2 @@
 # labfleet
-Automated Linux and Kubernetes fleet provisioning, diagnostics, observability, and failure testing built with Go, OpenTofu, Ansible, PXE, and Proxmox.
+A Go-based systems platform for automated Linux/Kubernetes fleet provisioning, diagnostics, observability, failure recovery, and distributed data-ingest experiments.
