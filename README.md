@@ -19,15 +19,14 @@ implemented capabilities.
 
 ### Infrastructure boundaries
 
-The coding-agent VM is bootstrap/control infrastructure, not a managed fleet
-node. It, the nested Proxmox management instance, the outer/production Proxmox
-environment, and production infrastructure must not be modified, reprovisioned,
-destroyed, rebooted, or intentionally disrupted by LabFleet work.
+The coding-agent VM and nested Proxmox management instance are bootstrap/control
+infrastructure and are not part of the managed LabFleet fleet.
 
 Only resources explicitly tagged or identified as LabFleet-managed may be
 modified. Ownership must be verified before any destructive action; if it
-cannot be established, stop and request human review. See [AGENTS.md](AGENTS.md)
-for the operating rules. This bootstrap defines and accesses no infrastructure.
+cannot be established, the operation must stop.
+
+See [AGENTS.md](AGENTS.md) for the operating rules.
 
 ## Repository layout
 
