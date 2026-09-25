@@ -1,0 +1,7 @@
+---
+- name: Apply Kubernetes sysctls
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - --load=/etc/sysctl.d/90-labfleet-kubernetes.conf
+  changed_when: true

@@ -28,6 +28,10 @@ run "blank_network_boot_vm" {
     error_message = "Starting the guest must be opt-in."
   }
   assert {
+    condition     = !proxmox_virtual_environment_vm.labfleet[0].agent[0].enabled
+    error_message = "Guest agent must remain disabled by default."
+  }
+  assert {
     condition     = proxmox_virtual_environment_vm.labfleet[0].disk[0].size == 4 && proxmox_virtual_environment_vm.labfleet[0].disk[0].interface == "scsi0"
     error_message = "Expected a small blank SCSI disk."
   }

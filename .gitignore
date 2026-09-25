@@ -109,6 +109,14 @@ kubeconfig.*
 
 *.retry
 
+# Operator-owned Ansible inputs and generated tool caches.
+ansible/inventory/local/
+ansible/.cache/
+ansible/.ansible/
+ansible/**/__pycache__/
+ansible/*.local.yml
+ansible/*.local.yaml
+
 # Local inventory/environment-specific values
 inventory.local.yml
 inventory.local.yaml

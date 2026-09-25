@@ -1,0 +1,46 @@
+---
+- name: Enforce LabFleet SSH access policy
+  ansible.builtin.template:
+    src: 00-labfleet.conf.j2
+    dest: "{{ ssh_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Reload ssh
+
+- name: Ensure SSH server is enabled and running
+  ansible.builtin.service:
+    name: ssh
+    enabled: true
+    state: started
+
+- name: Inspect complete effective SSH policy before reloading
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+  register: ssh_effective_policy
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require effective key-only non-root SSH policy
+  ansible.builtin.assert:
+    that:
+      - "'pubkeyauthentication yes' in ssh_effective_policy.stdout_lines"
+      - "'passwordauthentication no' in ssh_effective_policy.stdout_lines"
+      - "'kbdinteractiveauthentication no' in ssh_effective_policy.stdout_lines"
+      - "'permitrootlogin no' in ssh_effective_policy.stdout_lines"
+    fail_msg: "Existing sshd configuration overrides the managed policy; refusing reload."
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Apply SSH configuration and verify connectivity
+  ansible.builtin.meta: flush_handlers
+
+- name: Reset SSH connection after access policy change
+  ansible.builtin.meta: reset_connection
+
+- name: Wait for SSH connection after configuration
+  ansible.builtin.wait_for_connection:
+    timeout: 60

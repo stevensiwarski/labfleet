@@ -107,8 +107,24 @@ variable "network_boot" {
   default     = true
 }
 
+variable "management_network_bridge" {
+  description = "Optional existing management bridge for NIC0; when set, network_bridge is provisioning NIC1 and PXE boots net1."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.management_network_bridge == null ? true : can(regex("^[A-Za-z][A-Za-z0-9_.-]*$", var.management_network_bridge)) && var.management_network_bridge != var.network_bridge
+    error_message = "Management bridge must be a valid bridge distinct from the provisioning bridge."
+  }
+}
+
 variable "started" {
   description = "Start the disposable guest. False avoids sending PXE requests until explicitly enabled."
+  type        = bool
+  default     = false
+}
+
+variable "guest_agent_enabled" {
+  description = "Opt in to the Proxmox guest agent channel for guest discovery and attestation."
   type        = bool
   default     = false
 }
@@ -142,6 +158,18 @@ variable "vm_mac_addresses" {
       length(toset([for mac in var.vm_mac_addresses : lower(mac)])) == length(var.vm_mac_addresses)
     ) && alltrue([for mac in var.vm_mac_addresses : can(regex("^02(:[0-9a-fA-F]{2}){5}$", mac))])
     error_message = "Supply no MACs or one unique locally administered 02:xx:xx:xx:xx:xx MAC per VM."
+  }
+}
+
+variable "management_mac_addresses" {
+  description = "Optional locally administered management NIC MAC per VM; used only with management_network_bridge."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = (length(var.management_mac_addresses) == 0 || (var.management_network_bridge != null && length(var.management_mac_addresses) == var.vm_count)) && (
+      length(toset([for mac in var.management_mac_addresses : lower(mac)])) == length(var.management_mac_addresses)
+    ) && alltrue([for mac in var.management_mac_addresses : can(regex("^02(:[0-9a-fA-F]{2}){5}$", mac))]) && length(setintersection(toset([for mac in var.management_mac_addresses : lower(mac)]), toset([for mac in var.vm_mac_addresses : lower(mac)]))) == 0
+    error_message = "Supply no management MACs or one unique locally administered 02:xx:xx:xx:xx:xx MAC per VM, distinct from every provisioning MAC."
   }
 }
 

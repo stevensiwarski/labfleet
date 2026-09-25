@@ -18,22 +18,24 @@ import (
 )
 
 type Config struct {
-	ServiceHostname string `json:"service_hostname"`
-	Interface       string `json:"interface"`
-	ExpectedMAC     string `json:"expected_mac"`
-	Address         string `json:"address"`
-	ServiceIP       string `json:"service_ip"`
-	TargetIP        string `json:"target_ip"`
-	Subnet          string `json:"subnet"`
-	TargetMAC       string `json:"target_mac"`
-	TargetHostname  string `json:"target_hostname"`
-	Username        string `json:"username"`
-	DiskSerial      string `json:"disk_serial"`
-	SSHKeyPath      string `json:"ssh_key_path"`
-	Artifacts       string `json:"artifacts"`
-	Output          string `json:"output"`
-	HTTPPort        int    `json:"http_port"`
-	Dnsmasq         string `json:"dnsmasq"`
+	ServiceHostname  string `json:"service_hostname"`
+	Interface        string `json:"interface"`
+	ExpectedMAC      string `json:"expected_mac"`
+	Address          string `json:"address"`
+	ServiceIP        string `json:"service_ip"`
+	TargetIP         string `json:"target_ip"`
+	Subnet           string `json:"subnet"`
+	TargetMAC        string `json:"target_mac"`
+	ManagementMAC    string `json:"management_mac,omitempty"`
+	PasswordlessSudo bool   `json:"passwordless_sudo"`
+	TargetHostname   string `json:"target_hostname"`
+	Username         string `json:"username"`
+	DiskSerial       string `json:"disk_serial"`
+	SSHKeyPath       string `json:"ssh_key_path"`
+	Artifacts        string `json:"artifacts"`
+	Output           string `json:"output"`
+	HTTPPort         int    `json:"http_port"`
+	Dnsmasq          string `json:"dnsmasq"`
 }
 
 type Manifest struct {
@@ -90,6 +92,15 @@ func (c Config) Validate() error {
 	}
 	if serverMAC.String() == targetMAC.String() {
 		return errors.New("target MAC equals service MAC")
+	}
+	if c.ManagementMAC != "" {
+		managementMAC, err := mac(c.ManagementMAC)
+		if err != nil {
+			return fmt.Errorf("management_mac: %w", err)
+		}
+		if managementMAC.String() == targetMAC.String() {
+			return errors.New("management MAC equals target MAC")
+		}
 	}
 	_, network, e := net.ParseCIDR(c.Subnet)
 	if e != nil || network == nil || network.IP.To4() == nil {

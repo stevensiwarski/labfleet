@@ -1,0 +1,143 @@
+---
+- name: Disable active swap
+  ansible.builtin.command:
+    argv:
+      - swapoff
+      - -a
+  when:
+    - ansible_facts.swaptotal_mb | int > 0
+    - not ansible_check_mode
+  changed_when: true
+
+- name: Disable persistent fstab swap entries
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(?!\s*#)(.*\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Ensure required module load configuration exists
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/labfleet-kubernetes.conf
+    content: "{{ kubernetes_prereqs_kernel_modules | join('\n') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Read loaded kernel modules
+  ansible.builtin.slurp:
+    src: /proc/modules
+  register: kubernetes_prereqs_loaded_modules
+  when: not ansible_check_mode
+
+- name: Load required kernel modules
+  ansible.builtin.command:
+    argv:
+      - modprobe
+      - "{{ item }}"
+  loop: "{{ kubernetes_prereqs_kernel_modules }}"
+  when:
+    - not ansible_check_mode
+    - item not in ((kubernetes_prereqs_loaded_modules.content | b64decode).splitlines() | map('regex_replace', '^([^ ]+).*$','\\1') | list)
+  changed_when: true
+
+- name: Configure Kubernetes networking sysctls
+  ansible.builtin.template:
+    src: 90-labfleet-kubernetes.conf.j2
+    dest: /etc/sysctl.d/90-labfleet-kubernetes.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply Kubernetes sysctls
+
+- name: Apply sysctl configuration before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Read current Kubernetes networking sysctls
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -n
+      - "{{ item.key }}"
+  loop: "{{ kubernetes_prereqs_sysctls | dict2items }}"
+  register: kubernetes_prereqs_sysctl_current
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Apply Kubernetes networking sysctl drift
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -w
+      - "{{ item.item.key }}={{ item.item.value }}"
+  loop: "{{ kubernetes_prereqs_sysctl_current.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - not ansible_check_mode
+    - item.stdout | trim != item.item.value | string
+  changed_when: true
+
+- name: Read Kubernetes networking sysctls after remediation
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -n
+      - "{{ item.key }}"
+  loop: "{{ kubernetes_prereqs_sysctls | dict2items }}"
+  register: kubernetes_prereqs_sysctl_verified
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify Kubernetes networking sysctl values
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim == item.item.value | string
+    fail_msg: "{{ item.item.key }} is not {{ item.item.value }} on {{ inventory_hostname }}."
+  loop: "{{ kubernetes_prereqs_sysctl_verified.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: not ansible_check_mode
+
+- name: Find enabled systemd swap units
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - list-unit-files
+      - --type=swap
+      - --state=enabled
+      - --no-legend
+      - --no-pager
+      - --output=json
+  register: kubernetes_prereqs_enabled_swap_units
+  changed_when: false
+  # systemd 255 returns 1 for an empty filtered list, including JSON [].
+  # Accept only that exact empty-success shape, not arbitrary command failures.
+  failed_when: >-
+    kubernetes_prereqs_enabled_swap_units.rc != 0 and not
+    (kubernetes_prereqs_enabled_swap_units.rc == 1 and
+    kubernetes_prereqs_enabled_swap_units.stdout | trim == '[]' and
+    kubernetes_prereqs_enabled_swap_units.stderr | trim == '')
+  when: not ansible_check_mode
+
+- name: Require no enabled systemd swap units
+  ansible.builtin.assert:
+    that:
+      - kubernetes_prereqs_enabled_swap_units.stdout | from_json | length == 0
+    fail_msg: "Enabled systemd swap units remain on {{ inventory_hostname }}; disable the owning unit before Kubernetes workloads are deployed."
+  when: not ansible_check_mode
+
+- name: Fail if swap remains active
+  ansible.builtin.command:
+    argv:
+      - swapon
+      - --noheadings
+  register: kubernetes_prereqs_active_swap
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require swap to be disabled
+  ansible.builtin.assert:
+    that:
+      - kubernetes_prereqs_active_swap.stdout | trim | length == 0
+    fail_msg: "Active swap remains on {{ inventory_hostname }}. Disable it before Kubernetes workloads are deployed."
+  when: not ansible_check_mode

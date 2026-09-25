@@ -15,3 +15,11 @@ ownership_tag      = "labfleet"
 additional_tags    = ["disposable", "pxe-test"]
 vm_mac_addresses   = ["02:00:00:00:00:04"]
 disk_serial_prefix = "labfleet-pxe"
+
+# Optional Issue #7 dual-NIC node profile. References an EXISTING management
+# bridge only; no bridge or host routing is managed. PXE then boots net1.
+# management_network_bridge = "EXISTING_MANAGEMENT_BRIDGE"
+# management_mac_addresses  = ["02:00:00:00:00:03"]
+# guest_agent_enabled        = true
+# Match this MAC with provisioning JSON management_mac, and explicitly opt in
+# to passwordless_sudo only for the disposable configuration-management node.

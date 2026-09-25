@@ -1,0 +1,39 @@
+---
+- name: Configure LabFleet nodes
+  hosts: labfleet_nodes
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+  vars:
+    ansible_ssh_extra_args: >-
+      -o PreferredAuthentications=publickey -o PasswordAuthentication=no
+      -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes
+
+  pre_tasks:
+    - name: Run node safety preflight
+      ansible.builtin.import_role:
+        name: safety
+      tags: always
+
+    - name: Refuse role execution when the safety preflight was skipped
+      ansible.builtin.assert:
+        that:
+          - safety_preflight_complete | default(false) | bool
+        fail_msg: "Do not skip the ownership preflight."
+        quiet: true
+
+    - name: Gather node facts
+      ansible.builtin.setup:
+      become: true
+
+  roles:
+    - role: base
+      become: true
+    - role: ssh
+      become: true
+    - role: time
+      become: true
+    - role: kubernetes_prereqs
+      become: true
+    - role: containerd
+      become: true

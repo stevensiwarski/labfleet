@@ -1,0 +1,4 @@
+---
+# Leave empty to use the distribution's configured time sources.
+time_ntp_servers: []
+time_wait_for_sync: true

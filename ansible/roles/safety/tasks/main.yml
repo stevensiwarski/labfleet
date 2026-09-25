@@ -1,0 +1,75 @@
+---
+- name: Validate inventory before contacting any target
+  ansible.builtin.import_tasks: inventory.yml
+
+- name: Require configured read-only API credentials
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'PROXMOX_VE_ENDPOINT') is match('^https://[^/]+/?$')
+      - lookup('ansible.builtin.env', 'PROXMOX_VE_API_TOKEN') | length > 0
+    fail_msg: "Provide Proxmox endpoint/token through the controller environment."
+    quiet: true
+  no_log: true
+
+- name: Read target ownership from Proxmox without host mutations
+  ansible.builtin.uri:
+    url: >-
+      {{ lookup('ansible.builtin.env', 'PROXMOX_VE_ENDPOINT') | regex_replace('/$', '')
+      }}/api2/json/nodes/{{ labfleet_proxmox_node }}/qemu/{{ labfleet_vm_id | int }}/config
+    method: GET
+    headers:
+      Authorization: >-
+        PVEAPIToken={{ lookup('ansible.builtin.env', 'PROXMOX_VE_API_TOKEN')
+        | regex_replace('^PVEAPIToken=', '') }}
+    validate_certs: "{{ safety_validate_certs }}"
+    return_content: true
+    follow_redirects: none
+    use_proxy: false
+    timeout: 20
+  delegate_to: localhost
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  register: safety_api_response
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+- name: Validate API attestation
+  ansible.builtin.import_tasks: ownership.yml
+  vars:
+    labfleet_api_config: "{{ safety_api_response.json.data }}"
+
+- name: Read guest hardware and operating system identity before configuring it
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+      - min
+      - hardware
+      - network
+      - virtual
+  become: true
+
+- name: Validate guest identity
+  ansible.builtin.import_tasks: guest.yml
+
+- name: Check that this is not an existing Kubernetes control or worker node
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/kubernetes/kubelet.conf
+    - /etc/kubernetes/admin.conf
+    - /etc/kubernetes/manifests/kube-apiserver.yaml
+  become: true
+  register: safety_cluster_markers
+
+- name: Refuse configuration of existing cluster members
+  ansible.builtin.assert:
+    that:
+      - safety_cluster_markers.results | selectattr('stat.exists') | list | length == 0
+    fail_msg: "This playbook prepares disposable pre-cluster nodes only."
+    quiet: true
+
+- name: Record completed preflight for the current play
+  ansible.builtin.set_fact:
+    safety_preflight_complete: true

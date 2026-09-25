@@ -57,7 +57,10 @@ the **same** endpoint. Never point the provider and checker at different cluster
 | `vcpu` | 1 core per VM |
 | `memory_mib` | 512 MiB per VM |
 | `disk_gib` | 4 GiB blank SCSI disk per VM |
-| `network_boot` | true; SeaBIOS boot order `net0`, then `scsi0` |
+| `network_boot` | true; SeaBIOS PXE NIC (`net0` normally, `net1` with management NIC), then `scsi0` |
+| `management_network_bridge` | null; opt-in existing management bridge for guest NIC0; provisioning becomes NIC1 |
+| `management_mac_addresses` | Empty; optional unique `02:` management MAC per VM, distinct from all provisioning MACs |
+| `guest_agent_enabled` | false; opt-in QEMU guest-agent channel for authenticated discovery after guest installation |
 | `started` | false; opt in to starting the guest only on the isolated lab bridge |
 | `ownership_tag` | Must be `labfleet`; validation rejects any replacement |
 | `additional_tags` | Empty set; extra tags never replace `labfleet` |
@@ -73,8 +76,16 @@ Kubernetes, and Ansible are intentionally outside this issue.
 For the Issue #4 provisioning service, see [the provisioning guide](../../docs/provisioning.md).
 Use an explicitly isolated existing bridge, an allowlisted fixed MAC, and a disk
 serial matched by autoinstall. Override the small blank-VM defaults with at least
-8 GiB RAM and 20 GiB disk for the Ubuntu installer. Do not attach a provisioning
+16 GiB RAM and 20 GiB disk for the Ubuntu installer. Do not attach a provisioning
 service to the management bridge or create a new host network as an implicit step.
+
+For Issue #7 nodes, the optional dual-NIC profile references an existing management
+bridge for the **new guest NIC only**; it never manages the bridge or host routing.
+`vm_mac_addresses` still identifies the provisioning NIC, now `net1`, and the boot
+order follows it. Supply the matching `management_mac` and `target_mac` to the PXE
+renderer. That profile prevents routes/DNS from the provisioning DHCP interface
+from replacing the management uplink. Enable the guest-agent channel when using
+the dual-NIC seed, which installs the agent for API-based IP/SSH host-key discovery.
 
 ## Ownership and state safety
 
