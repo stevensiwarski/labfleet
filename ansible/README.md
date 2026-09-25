@@ -4,10 +4,12 @@ Issue #7 prepares **disposable Ubuntu 24.04 nodes** for a future kubeadm cluster
 It does not create a cluster, install kubeadm/kubelet/Cilium, or configure the
 coding-agent, Proxmox management, or persistent provisioner.
 
-**Status:** implemented and offline-tested; live installation and two-run
-idempotence are **unverified**. The existing PXE service is stopped and there is
-no disposable target. Issue #7's explicit read-only provisioner boundary prevents
-activating it. See [validation and limitations](../docs/ansible-host-configuration.md).
+**Status:** Issue #7 has been live validated on a freshly PXE-provisioned
+disposable Ubuntu 24.04.5 node. The first Ansible run succeeded with
+`ok=53 changed=16 failed=0`; the identical second run succeeded with
+`ok=47 changed=0 failed=0`, demonstrating two-run idempotence. The disposable
+target was removed and PXE services returned to their inactive/disabled
+post-validation state. See [validation and limitations](../docs/ansible-host-configuration.md).
 
 ## Toolchain
 
@@ -171,8 +173,9 @@ bootstrap/control system.
 
 ## Troubleshooting and deferred work
 
-- **PXE unavailable:** do not activate/reconfigure a read-only provisioner under
-  Issue #7 authority. This is the present live-validation blocker.
+- **PXE unavailable:** restore and validate the existing LabFleet provisioning
+  service within the authorized scope rather than bypassing its isolation model.
+  Keep provisioning DHCP bound only to the isolated provisioning network.
 - **Become fails:** preserve the key-based path; obtain the authorized target
   administrative path rather than weakening SSH or granting broad privileges.
 - **Apt/NTP unreachable:** the isolated PXE network advertises no gateway/DNS.
@@ -182,7 +185,8 @@ bootstrap/control system.
 - **SSH reload validation fails:** do not restart blindly; inspect conflicting
   existing drop-ins. A fresh key-authenticated connection must still succeed.
 - **Containerd wrong version/CRI unhealthy:** inspect installed package and
-  service logs. Do not disable the CRI check or claim 2.x support.
+  service logs. Do not disable the CRI check or assume support beyond the validated
+  containerd 1.7 and 2.2 families.
 - **Second run changes:** use Ansible task/handler output to locate cache expiry,
   package updates or drift; do not blanket-apply `changed_when: false` to writes.
 
