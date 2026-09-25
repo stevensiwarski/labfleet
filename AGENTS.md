@@ -20,16 +20,12 @@ Optimize for understandable, maintainable engineering rather than unnecessary co
 
 You are running inside the LabFleet coding-agent VM.
 
-This VM is bootstrap/control infrastructure.
+The coding-agent VM and nested Proxmox management instance are bootstrap/control
+infrastructure and must not be modified, reprovisioned, destroyed, rebooted, or
+intentionally disrupted by LabFleet automation.
 
-You must never modify, reprovision, destroy, reboot, or intentionally disrupt:
-
-- this coding-agent VM
-- the nested Proxmox management instance
-- the outer/production Proxmox environment
-- production infrastructure
-
-Only resources explicitly tagged or identified as LabFleet-managed resources may be modified.
+Only resources explicitly tagged or identified as LabFleet-managed resources
+may be modified.
 
 Before any destructive action, verify that the target is owned by LabFleet.
 
