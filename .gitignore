@@ -41,6 +41,7 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 !infra/opentofu/example.tfvars
+!infra/opentofu/provisioner/example.tfvars
 !provisioning/vm.example.tfvars
 
 # OpenTofu JSON plans can include environment-specific state and values.

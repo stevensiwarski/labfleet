@@ -1,18 +1,27 @@
 # Isolated Ubuntu PXE provisioning
 
-## Status and live-test blocker
+## Status and automated infrastructure
 
-Issue #4 adds provisioning configuration and an independently testable service.
-**End-to-end installation is not yet validated.** Read-only lab discovery found
-only the coding-agent VM and the management-addressed bridge. There is no
-positively identified dedicated provisioning network or LabFleet-owned service
-host. No DHCP server was started and no test VM was created for this issue.
+Issue #4 includes an API/OpenTofu-created Simple SDN zone `labfleet`, isolated
+VNet `lfpxe4` (alias `labfleet-provisioning`), and a dedicated
+`labfleet-provisioner` Ubuntu VM tagged `labfleet`. No manual GUI setup or
+operator-created network/VM is required. See the staged
+[infrastructure/bootstrap procedure](../infra/opentofu/provisioner/README.md).
+Two complete unattended PXE → install → disk reboot → SSH cycles passed, with
+guarded destruction and fresh blank-disk recreation between them.
 
-Do not satisfy these prerequisites by changing the coding-agent VM, the nested
-Proxmox management instance, or the management bridge. A human must provide or
-explicitly identify the isolated LabFleet provisioning segment and an owned
-service host. This is an infrastructure-access/safety blocker, not evidence that
-an unattended installation or DHCP-isolation test passed.
+The provisioner has 4 vCPU, 4 GiB RAM and a 32 GiB disk. Its `mgmt0` NIC obtains a
+control address on the existing management LAN; `prov0` has a local-configured
+static address on a separate private /24, no gateway and no DNS. Forwarding is
+disabled. The SDN VNet has no physical uplink, host address, NAT, or gateway.
+Only the provisioner and one disposable target attach to it. The isolated
+installation does not depend on management-LAN connectivity; management is used
+only for provisioner bootstrap/artifact downloads and SSH control.
+
+The protected coding-agent VM, existing management bridge/interfaces, management
+IP/default gateway, and unmanaged guests are never managed by these roots. SDN
+activation is cluster-wide: compare all pending changes to a private baseline
+and require that only the new owned definitions differ before applying.
 
 ## Architecture and request flow
 
@@ -26,7 +35,8 @@ LabFleet-owned service host                One LabFleet-owned blank guest
        +--- undionly.kpxe -------------------- iPXE
        +--- boot.ipxe ------------------------ local-disk attempt
        +--- vmlinuz / initrd / ubuntu.iso ---- installer if disk is blank
-       +--- seed/user-data + meta-data ------- Ubuntu autoinstall
+        +--- seed/user-data + meta-data ------- Ubuntu autoinstall
+        +--- disk-select (static Go helper) --- verify exact owned disk identity
                                               |
                                          install to identified disk
                                               |
@@ -37,13 +47,14 @@ The dnsmasq process provides a static lease to exactly one configured target MAC
 and serves a BIOS iPXE image using TFTP. An iPXE user-class match breaks the chain
 loop: firmware receives `undionly.kpxe`; iPXE receives an HTTP boot script. HTTP
 serves only named boot artifacts and that target's NoCloud seed. There is no DNS
-service, general DHCP pool, management-network DHCP, or automatic network setup.
+service, general DHCP pool, management-network DHCP, or network reconfiguration
+by the running PXE service.
 
 The iPXE script first attempts `sanboot --no-describe --drive 0x80`. A genuinely
 blank disk falls through to the installer. Once Ubuntu has installed a bootable
 disk, a subsequent network-first firmware boot should hand off to that disk
 instead of installing again. Firmware also retains `scsi0` as a fallback after
-`net0`. **This BIOS/iPXE handoff still requires live proof on the target VM.** A
+`net0`. The live run verified this BIOS/iPXE handoff on the disposable target. A
 partially installed or damaged disk is not an invitation to wipe another disk;
 stop, inspect the owned guest, and explicitly recreate it if appropriate.
 Only activate the installer service for the explicitly verified blank disposable
@@ -55,9 +66,16 @@ long-lived. This implementation does not promise automatic recovery of a damaged
 installed guest.
 
 The seed configures unattended installation, a hostname, a locked password,
-OpenSSH, and an external public key. It selects only the explicitly identified
-installation disk and reboots. No Ansible, Kubernetes, observability, or ingest
-configuration is included.
+OpenSSH, and an external public key. A static Go `disk-select` early-command
+verifies the exact LabFleet SCSI by-id link, its resolved whole block device, and
+its `ID_SCSI_SERIAL`. It requires a unique observed `ID_SERIAL` among all whole
+disks before rewriting that single selector in `/autoinstall.yaml`. Subiquity
+rereads the file after early commands. This accounts for QEMU reporting
+`ID_SERIAL=0QEMU_QEMU_HARDDISK_drive-scsi0` even when its SCSI serial/by-id link
+contains the configured LabFleet identity. Missing, mismatched or duplicate
+identities abort; there is no first-disk, largest-disk or `/dev/sda` fallback.
+The installer then installs only to that identified disk and reboots. No Ansible,
+Kubernetes, observability, or ingest configuration is included.
 
 ## Network safety boundary
 
@@ -97,7 +115,9 @@ Pinned release: **Ubuntu Server 24.04.5 LTS, amd64**, legacy BIOS provisioning.
   and `https://releases.ubuntu.com/24.04/SHA256SUMS.gpg`.
 
 The release URL and checksum were checked against Canonical's published list.
-The large ISO was **not downloaded or booted during the blocked lab test**.
+The live deployment downloaded the ISO, verified its pinned SHA-256 and the
+published checksum signature using Ubuntu's trusted archive keyring, and
+extracted the kernel/initrd from that ISO.
 Never substitute a moving daily/latest image or silently accept a new checksum.
 
 On the approved service host, use a local cache outside Git. Download with HTTPS
@@ -121,17 +141,21 @@ eliminate the installer's need for the complete live-server ISO.
 Use `undionly.kpxe` from an authenticated distro `ipxe` package (commonly
 `/usr/lib/ipxe/undionly.kpxe`). Record the package version and SHA-256 alongside
 the local artifact manifest; do not download a mutable unauthenticated binary at
-service startup. Kernel, initrd, ISO, and iPXE hashes must be verified before
+service startup. Kernel, initrd, ISO, iPXE and disk-helper hashes must be verified before
 serving. Generated artifacts, lease files, seed files, local keys, caches, and
 local configuration must remain outside Git.
 
 On the **approved owned service host only**, the relevant distro packages are
 `dnsmasq-base`, `ipxe`, and `libarchive-tools`. Use `dnsmasq-base`, not a package
 that automatically starts a host-wide dnsmasq service. Do not enable the distro's
-generic dnsmasq unit. Package installation is not performed by this repository.
+generic dnsmasq unit. The provisioner's generated cloud-init seed installs these
+packages automatically on that new owned VM, never on protected infrastructure.
 
-A reproducible cache preparation sequence, in a private staging directory on
-that host, is:
+Build the installer helper in the repository build workspace with
+`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /private/path/disk-select ./provisioning/cmd/disk-select`
+and transfer it to the owned service host's private staging directory. It is a
+small repository-built executable, not a new distro package or installer image.
+A reproducible cache preparation sequence in that staging directory is:
 
 ```sh
 set -eu
@@ -152,7 +176,7 @@ dpkg-query -W ipxe > ipxe-package-version.txt
 mv ubuntu-24.04.5-live-server-amd64.iso ubuntu.iso
 python3 - <<'PY'
 import hashlib, json
-names = ('ubuntu.iso', 'vmlinuz', 'initrd', 'undionly.kpxe')
+names = ('ubuntu.iso', 'vmlinuz', 'initrd', 'undionly.kpxe', 'disk-select')
 digests = {}
 for name in names:
     with open(name, 'rb') as stream:
@@ -163,7 +187,7 @@ PY
 ```
 
 Run each step only if the previous one succeeds (use `set -eu` in a script).
-Install the four files and manifest as ordinary non-symlink files in the configured
+Install the five files and manifest as ordinary non-symlink files in the configured
 artifact directory, readable but not writable by the service account. Hashes for
 the extracted files are generated only after authenticating the ISO; a mutable
 manifest from an untrusted source does not establish provenance. Preserve the
@@ -217,8 +241,9 @@ For supervised operation, the optional unit at
 `provisioning/labfleet-provisioning.service` runs as `labfleet-pxe`, grants the
 network capabilities dnsmasq needs, uses a read-only system view, and permits
 writes only to the generated runtime directory. It intentionally does not
-restart after a failed safety check. On the owned service host, an administrator
-must first:
+restart after a failed safety check. The automated provisioner bootstrap already
+creates its account, directories, marker, NIC configuration, and packages. The
+deployment sequence (executed over SSH on that owned host) must verify:
 
 1. Verify the host and provisioning segment against the ownership inventory.
 2. Create the dedicated service account; install the built binary and required
@@ -236,11 +261,14 @@ must first:
 7. Run preflight with the service's runtime permissions, inspect generated
    configuration, then install/enable only the LabFleet-specific unit.
 
-The seed disk selector is the full udev `ID_SERIAL`, not necessarily the short
-serial shown by Proxmox. For QEMU SCSI disks it can include a vendor/model prefix.
-The example value is illustrative. Confirm the exact value for the configured
-blank disk and require a unique match; never broaden it to a wildcard or allow
-the installer to choose a management disk.
+The local `disk_serial` input is the exact QEMU SCSI by-id suffix,
+`SQEMU_QEMU_HARDDISK_` followed by the configured short LabFleet disk serial
+in the validated lab (the helper also supports the `0QEMU_` by-id variant, but
+still requires the exact configured link; it never substitutes between them).
+The helper independently verifies this link and the short `ID_SCSI_SERIAL`
+before translating it to Subiquity's probed `ID_SERIAL`. It rejects ambiguous
+whole-disk identities. A live attempt without this translation failed closed
+before partitioning; do not work around that failure by weakening the selector.
 
 ## Safe VM lifecycle integration
 
@@ -251,8 +279,11 @@ an ignored local file. For the one primary disposable guest, choose a free reser
 Use the approved existing isolated bridge, not the management bridge. Set:
 
 - `vm_count = 1`, `network_boot = true`, and initially `started = false`.
-- At least `memory_mib = 8192` and `disk_gib = 20`; the live ISO, initrd, and
+- Use `memory_mib = 16384` and `disk_gib = 20`; the live ISO, initrd, and
   installer need substantially more RAM than the Issue #3 blank-VM defaults.
+  The live 8 GiB attempt exhausted the initramfs RAM-backed filesystem while
+  downloading the ISO; 16 GiB is the validated target sizing, not a requirement
+  for the separate provisioner VM.
 - `vm_mac_addresses` to the single allowlisted MAC.
 - `disk_serial_prefix` to a LabFleet value such as `labfleet-pxe`; OpenTofu
   appends the selected VM ID. Ensure the installer's exact udev disk identity is
@@ -265,7 +296,8 @@ after service binding and network isolation have been verified.
 
 ## Live acceptance and repeatability procedure
 
-This procedure is **pending**, not an account of a completed live test.
+Use this procedure for subsequent controlled reprovisioning. The evidence below
+separately records what the Issue #4 live run observed.
 
 1. Record protected resource configuration and network baselines privately.
    Confirm an owned service host and dedicated network; otherwise stop.
@@ -315,17 +347,100 @@ virtualization increases install time and storage/memory pressure. This initial
 path targets amd64 SeaBIOS, not UEFI, Secure Boot, ARM, or arbitrary bare metal.
 The isolated segment has no advertised Internet gateway: verify that the pinned
 ISO contains required installation packages, rather than quietly routing through
-management. Boot, offline installation, disk handoff, and SSH remain live-test
-limitations until the required isolated lab resources exist.
+management. The provisioner's management NIC may use Internet access for package
+and artifact bootstrap; the target has no management NIC or advertised gateway.
 
 ## Sanitized validation evidence
 
-No disposable VM was created for Issue #4. `labfleet-issue4-test-01` is the
-**example target name**, not a successfully provisioned machine. No DHCP/PXE
-runtime was launched, no provisioning NIC was added, and no Proxmox configuration
-was changed. There are no installer logs, guest SSH results, or packet captures
-to present as live evidence. The existing VM and management network were only
-inspected through read-only API calls.
+Live infrastructure was created through reviewed OpenTofu/API operations:
+
+- Simple SDN zone `labfleet`; VNet `lfpxe4`, alias `labfleet-provisioning`.
+- Persistent `labfleet-provisioner`, VM `930040`, tags `labfleet;provisioner`.
+- Exactly one disposable `labfleet-issue4-test-01`, VM `930004`, tags
+  `disposable;labfleet;pxe-test`, no local installation media, fresh 20 GiB disk,
+  deterministic MAC/SCSI serial, `net0;scsi0` boot order, 16 GiB RAM.
+- Owned cloud-image import and NoCloud seed ISO; separate persistent and
+  disposable OpenTofu state roots. State, real addresses, keys and raw evidence
+  remain private and ignored, not committed.
+
+The baseline and post-apply API comparisons showed identical protected VM
+configuration/running state, existing management interface/bridge configuration,
+node configuration and configured management address/default gateway. Management
+API and coding-agent connectivity remained available. The VNet bridge API showed
+only the target's `net0` and provisioner's `net1`, no physical uplink and no
+protected VM attachment. No packages were installed on the coding-agent VM;
+build-only ISO/WebSocket tools were extracted in a private temporary workspace.
+
+Observed network evidence includes DHCP DISCOVER/OFFER/REQUEST/ACK on `prov0`,
+iPXE's user class and HTTP user-agent, and HTTP requests for the script,
+kernel/initrd, ISO, NoCloud seed and disk helper. Proxmox's virtio PXE ROM already
+runs iPXE, so it takes the HTTP branch directly; TFTP `undionly.kpxe` remains the
+configured fallback for non-iPXE BIOS firmware. A separate TFTP transfer from the
+installed target returned `undionly.kpxe` with the exact verified manifest hash.
+Do not label that service test as an observed TFTP firmware chain-load.
+
+dnsmasq reports `sockets bound exclusively to interface prov0`; `ss` confirms
+the DHCP socket has `%prov0` device binding. Linux represents its local address
+as `0.0.0.0%prov0:67`: this is **not** an unscoped all-interface wildcard listener.
+There is no management-interface DHCP server socket. HTTP is both address- and
+device-bound, rejects non-target requests with 403, and both forwarding sysctls
+are zero. Management-side packet captures filtered for DHCP replies from the
+provisioner are retained privately with the provisioning captures. Both runs
+recorded zero LabFleet DHCP replies on management. The second capture included
+all management DHCP replies and checked both owned MACs and the provisioning
+source IP, rather than assuming other lab DHCP servers were absent.
+
+Live discovery caught and corrected three assumptions before any successful
+installation: 8 GiB was insufficient for the ISO's RAM-backed download; the
+actual SCSI by-id link uses `SQEMU_`, while Subiquity sees a different `ID_SERIAL`;
+and the installer's `/run` is `noexec`. These failures stopped before disk
+partitioning. Diagnostic console input was confined to those failed attempts;
+successful installation used a fresh boot with no installer keyboard input.
+
+The first complete run recorded script/kernel/initrd requests at 08:13, ISO/seed
+and verified disk-helper retrieval at 08:14, and a post-install `boot.ipxe`
+request at 08:17 with **no new kernel/initrd/ISO download**. The installed system
+reported `Ubuntu 24.04.5 LTS`, hostname `labfleet-issue4-test-01`, ext4 root on
+`/dev/sda2`, a normal `/boot/vmlinuz-6.8.0-139-generic root=UUID=…` command line,
+and systemd state `running`. The retained curtin log ends with
+`curtin: Installation finished.` and successful GRUB/bootloader installation.
+SSH public-key authentication from the coding-agent through the pinned owned
+provisioner succeeded; a password-only attempt was rejected. The target's SSH
+host key was obtained through that authenticated provisioner after checking the
+exclusive owned VNet membership and reserved MAC, then pinned for strict SSH
+verification; its fingerprint also matched the VM console. The private key was
+never copied to the provisioner or target.
+
+The console recorded cloud-init final completion. Afterwards `cloud-init status`
+reports `disabled`: `/etc/cloud/cloud-init.disabled` explicitly says
+`Disabled by Ubuntu live installer after first boot.` This is the installed
+image's documented state, not an unfinished cloud-init run. The provisioner,
+which boots a cloud image rather than an autoinstall disk, reports `status: done`.
+The installed `fleet` account has no usable password; unattended administrative
+sudo is not enabled on the disposable target.
+
+The first target was destroyed through a reviewed, ownership-guarded plan;
+inventory and storage-content checks confirmed both VM and disk absent. Exactly
+one fresh blank target with the same deterministic identity was then recreated
+through the same guard for the repeat run.
+
+The second run started at 08:20, downloaded the same cached installer/seed/helper,
+and requested only the boot script at 08:24 for disk handoff. Its capture contains
+exactly one ISO download and two boot-script requests. It again completed curtin,
+rebooted to Ubuntu 24.04.5 with the expected hostname, ext4 disk root, systemd
+state `running`, and successful strict key-authenticated SSH. Its filesystem UUID
+and SSH host key differ from the first installation, confirming fresh state; the
+second key fingerprint also matches its console. No installation keyboard input
+was used in either successful run.
+
+After the second validation, the guarded destroy removed the disposable VM and
+its disk again. The final inventory contains only the original protected guest
+and the persistent tagged provisioner; the isolated bridge has only the
+provisioner's provisioning NIC. Baseline comparisons still pass. The test
+DHCP/TFTP/HTTP service and captures are stopped, with no test listeners left.
+The provisioner, isolated SDN resources, owned bootstrap artifacts and verified
+installer cache remain for future explicitly scoped LabFleet work. A follow-up
+plan for the persistent infrastructure was a no-op.
 
 Offline checks performed with the installed system toolchain:
 
@@ -333,39 +448,41 @@ Offline checks performed with the installed system toolchain:
   four Make targets passed. These include deterministic rendering, host/interface
   rejection, an early CLI startup refusal, key parsing, artifact pin/hash checks,
   and HTTP GET/HEAD/range/source/path tests with synthetic data.
-- OpenTofu 1.12.6: formatting, initialization, validation, and **13 mocked test
-  runs** passed. No live apply was attempted for this issue.
-- dnsmasq 2.92: `--test` accepted the rendered configuration. This does not start
-  DHCP or TFTP and is not a packet-isolation test.
-- `cloud-init schema` accepted the rendered cloud-config. The unprivileged CLI
-  emitted warnings while attempting to inspect its protected local datasource;
-  it was not elevated or used to change that datasource. The autoinstall mapping
-  also passed JSON Schema validation against Canonical Subiquity schema blob
-  `4d5ef49879a19b30a0875cee0e4ce3f8e05e8b84`. Neither check boots the pinned ISO.
-- iPXE script structure, local-disk fallback, and NoCloud kernel arguments were
-  checked statically. No iPXE firmware execution was observed.
-- `systemd-analyze verify` accepted a temporary copy of the unit referencing the
-  locally built binary. The unit was not installed or started.
+- OpenTofu 1.12.6: formatting, initialization, validation, and **18 mocked test
+  runs** passed (13 disposable lifecycle tests plus five persistent infrastructure
+  tests). Live applies used saved/reviewed plans; target plans also passed the
+  existing live `fleetctl tofu-check` ownership guard.
+- dnsmasq 2.91 on the provisioner: `--test` accepted the deployed configuration;
+  actual listener and packet evidence is reported separately above.
+- `cloud-init schema` on the owned provisioner accepted the deployed cloud-config.
+  The autoinstall mapping also passed JSON Schema validation against Canonical
+  Subiquity schema blob
+  `4d5ef49879a19b30a0875cee0e4ce3f8e05e8b84`, including the new early-command.
+  The owned provisioner's own NoCloud user-data also passed `cloud-init schema`
+  and completed cloud-init successfully.
+- iPXE execution and artifact retrieval were observed live; disk-handoff evidence
+  is tracked with the installation result below.
+- `systemd-analyze verify` accepted the installed dedicated service unit. The
+  service ran only on the new owned provisioner and passed runtime preflight.
 - `git diff --check` passed. Generated files and synthetic test keys remained in
   private temporary paths outside the repository.
 
-Issue acceptance status (FAIL here means **blocked/unverified**, not an observed
-failed installation):
+Issue acceptance status after both complete runs and final cleanup:
 
 | Acceptance criterion | Status |
 | --- | --- |
-| Blank LabFleet VM PXE boots | FAIL — no safe live test network/host |
-| Ubuntu installation requires no input | FAIL — no live installation |
-| Installed VM reboots | FAIL — no installed target |
-| VM reachable over SSH | FAIL — no installed target |
-| Hostname assigned automatically | FAIL — rendered only, not observed in a guest |
-| SSH key authentication works | FAIL — rendered only, not exercised |
-| Destroy/recreate provisioning is repeatable | FAIL — live sequence blocked |
-| DHCP/PXE stays inside isolated network | FAIL — live traffic isolation unverified; no DHCP was started |
-| Coding-agent VM remains unaffected | PASS — no infrastructure or host-configuration changes |
-| Proxmox management remains unaffected | PASS — read-only discovery only |
+| Blank LabFleet VM PXE boots | PASS — iPXE and installer kernel/initrd/ISO retrieval observed |
+| Ubuntu installation requires no input | PASS — fresh unattended run and curtin completion log |
+| Installed VM reboots | PASS — disk root/kernel command line and no repeat installer download |
+| VM reachable over SSH | PASS — coding-agent through owned provisioner |
+| Hostname assigned automatically | PASS — `labfleet-issue4-test-01` |
+| SSH key authentication works | PASS — key-only login; password-only attempt rejected |
+| Destroy/recreate provisioning is repeatable | PASS — second complete fresh-disk installation and SSH validation |
+| DHCP/PXE stays inside isolated network | PASS — isolated VNet membership, device-bound socket and management capture |
+| Coding-agent VM remains unaffected | PASS — protected configuration unchanged and connectivity retained |
+| Proxmox management remains unaffected | PASS — management baseline unchanged and API reachable |
 | No credentials committed | PASS — only placeholders and runtime-generated test keys |
 
-Do not interpret passing CI or schema tests as completion of these live criteria.
-Keep the PR in draft and Issue #4 open until an owned service host and isolated
-network are available and the full acceptance procedure has been demonstrated.
+Passing CI or schema tests alone is not proof of these live criteria; the results
+above come from the owned lab runs. PR #10 is intended for human review after
+the updated CI passes, not automatic merge. No Issue #5 work is included.

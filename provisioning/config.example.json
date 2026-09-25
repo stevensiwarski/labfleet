@@ -9,7 +9,7 @@
   "target_mac": "02:00:00:00:00:04",
   "target_hostname": "labfleet-issue4-test-01",
   "username": "fleet",
-  "disk_serial": "0QEMU_QEMU_HARDDISK_labfleet-pxe-930004",
+  "disk_serial": "SQEMU_QEMU_HARDDISK_labfleet-pxe-930004",
   "ssh_key_path": "/etc/labfleet/operator.pub",
   "artifacts": "/var/lib/labfleet/provisioning/artifacts",
   "output": "/var/lib/labfleet/provisioning/runtime",

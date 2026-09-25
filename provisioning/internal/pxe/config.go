@@ -40,7 +40,7 @@ type Manifest struct {
 	SHA256 map[string]string `json:"sha256"`
 }
 
-var artifactNames = []string{"ubuntu.iso", "vmlinuz", "initrd", "undionly.kpxe"}
+var artifactNames = []string{"ubuntu.iso", "vmlinuz", "initrd", "undionly.kpxe", "disk-select"}
 var dnsName = regexp.MustCompile(`^labfleet-[a-z0-9](?:[a-z0-9-]{0,50}[a-z0-9])?$`)
 
 const UbuntuISOURL = "https://releases.ubuntu.com/24.04/ubuntu-24.04.5-live-server-amd64.iso"

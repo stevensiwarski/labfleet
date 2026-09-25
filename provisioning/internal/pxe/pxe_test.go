@@ -73,6 +73,12 @@ func TestRenderIsOfflineAndPinnedTargetsAreExact(t *testing.T) {
 		t.Fatal("unexpected callback")
 	}
 	u := string(files["user-data"])
+	if !strings.Contains(u, "early-commands:") || !strings.Contains(u, "/disk-select") || !strings.Contains(u, "chmod 0700") || !strings.Contains(u, "--expected-id "+c.DiskSerial+" --autoinstall /autoinstall.yaml") {
+		t.Fatal("missing fail-closed exact disk identity resolution")
+	}
+	if strings.Contains(u, "/run/labfleet-disk-select") || !strings.Contains(u, "/usr/local/sbin/labfleet-disk-select") {
+		t.Fatal("installer /run is noexec; helper must use executable live-root path")
+	}
 	if !strings.Contains(u, "name: direct") || !strings.Contains(u, "serial: \"0QEMU_QEMU_HARDDISK_labfleet-pxe-930004\"") || strings.Contains(u, "type: disk") {
 		t.Fatalf("not exact direct layout: %s", u)
 	}
@@ -103,7 +109,7 @@ func TestPinnedISOHashMustMatch(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(d, n), []byte("data"), 0600)
 	}
 	sha := "3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7"
-	manifest := `{"sha256":{"ubuntu.iso":"` + sha + `","vmlinuz":"` + sha + `","initrd":"` + sha + `","undionly.kpxe":"` + sha + `"}}`
+	manifest := `{"sha256":{"ubuntu.iso":"` + sha + `","vmlinuz":"` + sha + `","initrd":"` + sha + `","undionly.kpxe":"` + sha + `","disk-select":"` + sha + `"}}`
 	_ = os.WriteFile(filepath.Join(d, "manifest.json"), []byte(manifest), 0600)
 	if VerifyManifest(d, UbuntuISOSHA256) == nil {
 		t.Fatal("accepted non-release ISO hash")
@@ -116,6 +122,15 @@ func TestPinnedISOHashMustMatch(t *testing.T) {
 	}
 	if VerifyManifest(d, sha) == nil {
 		t.Fatal("accepted modified kernel bytes")
+	}
+	if e := os.WriteFile(filepath.Join(d, "vmlinuz"), []byte("data"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(d, "disk-select"), []byte("tampered"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if VerifyManifest(d, sha) == nil {
+		t.Fatal("accepted modified disk identity helper")
 	}
 }
 

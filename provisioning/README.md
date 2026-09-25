@@ -18,6 +18,18 @@ service host; it is not installed automatically.
 
 See [the provisioning guide](../docs/provisioning.md) for verified artifact
 handling, deployment prerequisites, runtime safety checks, VM identity, and the
-live acceptance procedure. Live provisioning is currently blocked by the absence
-of an identified isolated provisioning network and owned service host. No
-successful PXE/autoinstall/SSH or repeatability result is claimed yet.
+live acceptance results and procedure.
+
+The [persistent infrastructure root](../infra/opentofu/provisioner/README.md)
+automates the isolated Simple SDN zone/VNet and dedicated provisioner VM through
+the Proxmox API. `seedctl` renders its cloud-init bootstrap:
+
+```sh
+go build -o bin/seedctl ./provisioning/cmd/seedctl
+bin/seedctl --config /private/path/bootstrap.local.json
+```
+
+`bootstrap.example.json` is a documentation-only shape reference. Choose unused
+private lab addressing, matching new-VM NIC MACs, an external public key, and a
+fresh output path inside a private directory. The seed files become a small
+NoCloud ISO for the provisioner; the disposable target has no local install media.

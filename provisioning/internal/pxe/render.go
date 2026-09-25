@@ -31,6 +31,8 @@ boot
 autoinstall:
   version: 1
   interactive-sections: []
+  early-commands:
+    - [sh, -c, %s]
   refresh-installer:
     update: false
   apt:
@@ -57,7 +59,7 @@ autoinstall:
       match:
         serial: %s
   shutdown: reboot
-`, q("en_US.UTF-8"), q(c.TargetHostname), q(c.Username), q(key), q(c.DiskSerial))
+`, q(fmt.Sprintf("wget -q -O /usr/local/sbin/labfleet-disk-select %s/disk-select && chmod 0700 /usr/local/sbin/labfleet-disk-select && /usr/local/sbin/labfleet-disk-select --expected-id %s --autoinstall /autoinstall.yaml", base, c.DiskSerial)), q("en_US.UTF-8"), q(c.TargetHostname), q(c.Username), q(key), q(c.DiskSerial))
 	meta := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", q(c.TargetHostname), q(c.TargetHostname))
 	_, network, _ := net.ParseCIDR(c.Subnet)
 	mask := net.IP(network.Mask).String()

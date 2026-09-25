@@ -40,3 +40,9 @@ jobs:
       - run: tofu init -backend=false -input=false -lockfile=readonly
       - run: tofu validate
       - run: tofu test
+      - name: Validate persistent provisioning infrastructure
+        working-directory: infra/opentofu/provisioner
+        run: |
+          tofu init -backend=false -input=false -lockfile=readonly
+          tofu validate
+          tofu test
