@@ -132,3 +132,25 @@ variable "additional_tags" {
     error_message = "Tags must use lowercase alphanumeric, underscore, or hyphen characters."
   }
 }
+
+variable "vm_mac_addresses" {
+  description = "Optional explicit locally administered MAC per VM for provisioning DHCP reservations. Empty preserves provider allocation."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = (length(var.vm_mac_addresses) == 0 || length(var.vm_mac_addresses) == var.vm_count) && (
+      length(toset([for mac in var.vm_mac_addresses : lower(mac)])) == length(var.vm_mac_addresses)
+    ) && alltrue([for mac in var.vm_mac_addresses : can(regex("^02(:[0-9a-fA-F]{2}){5}$", mac))])
+    error_message = "Supply no MACs or one unique locally administered 02:xx:xx:xx:xx:xx MAC per VM."
+  }
+}
+
+variable "disk_serial_prefix" {
+  description = "Optional explicit LabFleet disk serial prefix for exact autoinstall disk selection. The VM ID is appended."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.disk_serial_prefix == null ? true : can(regex("^labfleet-[a-z0-9]{1,4}$", var.disk_serial_prefix))
+    error_message = "Use labfleet- followed by 1..4 lowercase alphanumeric characters; resulting serial fits 20 bytes."
+  }
+}
