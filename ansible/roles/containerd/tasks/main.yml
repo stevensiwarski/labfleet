@@ -1,0 +1,71 @@
+---
+- name: Ensure containerd configuration directory exists
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Ubuntu containerd package
+  ansible.builtin.apt:
+    name: containerd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 180
+  register: containerd_containerd_package
+  retries: 3
+  delay: 10
+  until: containerd_containerd_package is succeeded
+
+- name: Read installed containerd version
+  ansible.builtin.command:
+    argv:
+      - containerd
+      - --version
+  register: containerd_containerd_version
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require containerd 1.7 before writing v2 configuration
+  ansible.builtin.assert:
+    that:
+      - "containerd_containerd_version.stdout is search('containerd.* 1[.]7[.][0-9]+(?: |$)')"
+    fail_msg: "This configuration requires containerd 1.7; found {{ containerd_containerd_version.stdout }} on {{ inventory_hostname }}."
+  when: not ansible_check_mode
+
+- name: Configure containerd CRI and systemd cgroups
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: "{{ containerd_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart containerd
+
+- name: Ensure containerd is enabled and running
+  ansible.builtin.service:
+    name: containerd
+    enabled: true
+    state: started
+
+- name: Apply containerd configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Check containerd CRI plugin health
+  ansible.builtin.command:
+    argv:
+      - ctr
+      - plugins
+      - ls
+  register: containerd_containerd_plugins
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require healthy containerd CRI plugin
+  ansible.builtin.assert:
+    that:
+      - containerd_containerd_plugins.stdout is search('io.containerd.grpc.v1.*cri.*ok')
+    fail_msg: "containerd CRI plugin is not healthy on {{ inventory_hostname }}."
+  when: not ansible_check_mode

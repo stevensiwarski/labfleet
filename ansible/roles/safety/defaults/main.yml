@@ -1,0 +1,3 @@
+---
+safety_protected_vm_ids: [100, 930040]
+safety_validate_certs: true

@@ -1,0 +1,18 @@
+---
+- name: Match the SSH endpoint to the API-attested virtual machine
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version == '24.04'
+      - ansible_facts.virtualization_role == 'guest'
+      - ansible_facts.hostname == labfleet_expected_hostname
+      - >-
+        (ansible_facts.product_uuid | lower) ==
+        (safety_api_response.json.data.smbios1 | regex_findall('(?:^|,)uuid=([0-9a-fA-F-]{36})(?:,|$)') | first | lower)
+      - >-
+        (safety_api_response.json.data.net0 | regex_findall('(?:^|,)virtio=([0-9A-Fa-f:]{17})(?:,|$)') | first | lower)
+        in (ansible_facts.interfaces | map('extract', ansible_facts) | selectattr('macaddress', 'defined')
+        | map(attribute='macaddress') | map('lower') | list)
+      - ansible_host in ansible_facts.all_ipv4_addresses
+    fail_msg: "SSH endpoint identity differs from the owned VM, or is not a supported Ubuntu guest."
+    quiet: true

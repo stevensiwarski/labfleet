@@ -1,0 +1,67 @@
+---
+- name: Install systemd-timesyncd
+  ansible.builtin.apt:
+    name: systemd-timesyncd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 180
+
+- name: Ensure systemd-timesyncd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure systemd-timesyncd upstreams when specified
+  ansible.builtin.template:
+    src: 90-labfleet-timesyncd.conf.j2
+    dest: /etc/systemd/timesyncd.conf.d/90-labfleet.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: time_ntp_servers | length > 0
+  notify: Restart systemd-timesyncd
+
+- name: Remove managed upstream override when using system defaults
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d/90-labfleet.conf
+    state: absent
+  when: time_ntp_servers | length == 0
+  notify: Restart systemd-timesyncd
+
+- name: Ensure systemd-timesyncd is enabled and running
+  ansible.builtin.service:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+
+- name: Apply time synchronization configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Read time synchronization status when required
+  ansible.builtin.command:
+    argv:
+      - timedatectl
+      - show
+      - --property=NTPSynchronized
+      - --value
+  register: time_ntp_synced
+  changed_when: false
+  when:
+    - time_wait_for_sync | bool
+    - not ansible_check_mode
+  retries: 12
+  delay: 5
+  until: time_ntp_synced.stdout | trim == 'yes'
+
+- name: Require synchronized time when configured
+  ansible.builtin.assert:
+    that:
+      - time_ntp_synced.stdout | trim == 'yes'
+    fail_msg: "Time synchronization has not completed on {{ inventory_hostname }}. Check network access and configured NTP sources."
+  when:
+    - time_wait_for_sync | bool
+    - not ansible_check_mode

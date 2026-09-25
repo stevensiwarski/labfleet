@@ -1,0 +1,19 @@
+---
+- name: Require explicit disposable-node inventory and SSH administration
+  ansible.builtin.assert:
+    that:
+      - "'labfleet_nodes' in group_names"
+      - "(group_names | intersect(['bootstrap_control', 'proxmox', 'labfleet_provisioners'])) | length == 0"
+      - labfleet_disposable | default(false) | bool
+      - ansible_connection | default('ssh') == 'ssh'
+      - ansible_user | default('') is match('^[a-z_][a-z0-9_-]*$')
+      - ansible_user | default('') not in ['', 'root']
+      - labfleet_expected_hostname | default('') is match('^labfleet-[a-z0-9-]+$')
+      - "'provisioner' not in (labfleet_expected_hostname | default(''))"
+      - labfleet_vm_id | default(0) | int >= 900000
+      - labfleet_vm_id | default(0) | int <= 999999
+      - labfleet_vm_id | int not in safety_protected_vm_ids
+      - labfleet_proxmox_node | default('') is match('^[a-zA-Z0-9][a-zA-Z0-9-]*$')
+      - ansible_host | default('') not in ['', 'localhost', '127.0.0.1', '::1', 'NODE_ADDRESS_REQUIRED']
+    fail_msg: "Refusing inventory: only explicitly disposable LabFleet SSH nodes are allowed."
+    quiet: true

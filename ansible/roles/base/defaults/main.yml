@@ -1,0 +1,16 @@
+---
+# safe avoids applying potentially disruptive distribution upgrades by default.
+base_apt_upgrade: safe
+base_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - iproute2
+  - openssh-server
+  - python3
+  - sudo
+  - conntrack
+  - socat
+  - kmod
+  - procps
+  - util-linux

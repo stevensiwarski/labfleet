@@ -1,0 +1,16 @@
+---
+- name: Require independent Proxmox ownership and non-control identity
+  ansible.builtin.assert:
+    that:
+      - labfleet_api_config.name == labfleet_expected_hostname
+      - "'labfleet' in labfleet_api_config.tags.split(';')"
+      - "'disposable' in labfleet_api_config.tags.split(';')"
+      - "'provisioner' not in labfleet_api_config.tags.split(';')"
+      - "'bootstrap' not in labfleet_api_config.tags.split(';')"
+      - "'control' not in labfleet_api_config.tags.split(';')"
+      - not (labfleet_api_config.protection | default(false) | bool)
+      - "'provisioner' not in labfleet_api_config.name"
+      - labfleet_api_config.smbios1 is search('(?:^|,)uuid=[0-9a-fA-F-]{36}(?:,|$)')
+      - labfleet_api_config.net0 is search('(?:^|,)virtio=[0-9A-Fa-f:]{17}(?:,|$)')
+    quiet: true
+    fail_msg: "Proxmox does not attest an explicitly owned disposable non-control target."
