@@ -8,11 +8,26 @@ be added incrementally.
 
 ## Architecture
 
-`fleetctl` is the operator-facing command-line entry point. `node-doctor` is a
-small node diagnostics entry point. Shared application logic belongs in
-`internal/`; OpenTofu manages infrastructure, Ansible configures machines, and
-the provisioning and Kubernetes deployment directories hold their respective
-workflows.
+The intended architecture uses `fleetctl` as the operator-facing command-line
+entry point and `node-doctor` for node diagnostics. Shared application logic
+belongs in `internal/`. OpenTofu will manage LabFleet-owned VM lifecycles,
+Ansible will configure those machines, and provisioning workflows will
+coordinate these steps. Kubernetes manifests will describe lab workloads;
+observability configuration and distributed data-ingest experiments have
+separate deployment directories. These are planned responsibilities, not
+implemented capabilities.
+
+### Infrastructure boundaries
+
+The coding-agent VM is bootstrap/control infrastructure, not a managed fleet
+node. It, the nested Proxmox management instance, the outer/production Proxmox
+environment, and production infrastructure must not be modified, reprovisioned,
+destroyed, rebooted, or intentionally disrupted by LabFleet work.
+
+Only resources explicitly tagged or identified as LabFleet-managed may be
+modified. Ownership must be verified before any destructive action; if it
+cannot be established, stop and request human review. See [AGENTS.md](AGENTS.md)
+for the operating rules. This bootstrap defines and accesses no infrastructure.
 
 ## Repository layout
 
@@ -22,6 +37,8 @@ workflows.
 - `ansible/` — machine configuration
 - `provisioning/` — provisioning workflows
 - `deploy/kubernetes/` — Kubernetes deployment manifests
+- `deploy/observability/` — planned metrics, dashboards, and alerting configuration
+- `deploy/ingest/` — planned distributed data-ingest experiment deployments
 - `tests/` — integration and end-to-end tests
 - `docs/` — project documentation
 - `.github/workflows/` — pull-request and main-branch CI
@@ -29,7 +46,9 @@ workflows.
 ## Status
 
 Initial repository bootstrap. The command binaries are placeholders; no
-infrastructure automation or node configuration is implemented yet.
+infrastructure automation, node diagnostics/configuration, observability stack,
+or ingest workloads are implemented yet. Unit tests cover placeholder messages;
+integration and end-to-end tests are deferred until those capabilities exist.
 
 ## Developer usage
 

@@ -34,3 +34,15 @@ Only resources explicitly tagged or identified as LabFleet-managed resources may
 Before any destructive action, verify that the target is owned by LabFleet.
 
 If ownership cannot be established, stop and request human review.
+
+## GitHub issue access
+
+Do not use `gh issue view`.
+
+Read issues with:
+
+`gh api repos/stevensiwarski/labfleet/issues/<number>`
+
+For concise output:
+
+`gh api repos/stevensiwarski/labfleet/issues/<number> --jq '{number, title, state, body, html_url}'`
