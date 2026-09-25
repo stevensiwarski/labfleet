@@ -10,12 +10,12 @@ be added incrementally.
 
 The intended architecture uses `fleetctl` as the operator-facing command-line
 entry point and `node-doctor` for node diagnostics. Shared application logic
-belongs in `internal/`. OpenTofu will manage LabFleet-owned VM lifecycles,
+belongs in `internal/`. OpenTofu manages disposable LabFleet-owned VM lifecycles;
 Ansible will configure those machines, and provisioning workflows will
 coordinate these steps. Kubernetes manifests will describe lab workloads;
 observability configuration and distributed data-ingest experiments have
-separate deployment directories. These are planned responsibilities, not
-implemented capabilities.
+separate deployment directories. Beyond the blank VM lifecycle and ownership
+checker, these are planned responsibilities, not implemented capabilities.
 
 ### Infrastructure boundaries
 
@@ -44,10 +44,12 @@ See [AGENTS.md](AGENTS.md) for the operating rules.
 
 ## Status
 
-Initial repository bootstrap. The command binaries are placeholders; no
-infrastructure automation, node diagnostics/configuration, observability stack,
-or ingest workloads are implemented yet. Unit tests cover placeholder messages;
-integration and end-to-end tests are deferred until those capabilities exist.
+The repository includes a minimal Go scaffold and an OpenTofu lifecycle for
+disposable blank Proxmox VMs. `fleetctl tofu-check` validates a saved plan against
+live ownership before applying it; `node-doctor` remains a placeholder. See
+[the OpenTofu guide](infra/opentofu/README.md) for credentials, variables, safety,
+and lifecycle steps. PXE services, OS installation, guest configuration,
+Kubernetes, observability, and ingest workloads are not implemented.
 
 ## Developer usage
 
