@@ -48,8 +48,11 @@ The repository includes a minimal Go scaffold and an OpenTofu lifecycle for
 disposable blank Proxmox VMs. `fleetctl tofu-check` validates a saved plan against
 live ownership before applying it; `node-doctor` remains a placeholder. See
 [the OpenTofu guide](infra/opentofu/README.md) for credentials, variables, safety,
-and lifecycle steps. PXE services, OS installation, guest configuration,
-Kubernetes, observability, and ingest workloads are not implemented.
+and lifecycle steps. An isolated PXE/autoinstall service is under development;
+its [provisioning guide](docs/provisioning.md) records the missing dedicated
+network/service-host prerequisite and the still-unverified live installation
+criteria. Guest configuration, Kubernetes, observability, and ingest workloads
+are not implemented.
 
 ## Developer usage
 

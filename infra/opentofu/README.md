@@ -63,10 +63,18 @@ the **same** endpoint. Never point the provider and checker at different cluster
 | `additional_tags` | Empty set; extra tags never replace `labfleet` |
 | `proxmox_endpoint` | null, reads provider environment variable |
 | `tls_insecure` | false; lab-only explicit TLS verification bypass |
+| `vm_mac_addresses` | Empty; optionally one unique `02:` MAC per VM for PXE DHCP reservations |
+| `disk_serial_prefix` | null; optionally `labfleet-` plus 1..4 lowercase alphanumeric characters; VM ID is appended |
 
 Network boot capability is not an installed OS or a successful PXE installation.
 SeaBIOS with a virtio NIC can attempt PXE; a PXE server, DHCP, boot artifacts,
 Kubernetes, and Ansible are intentionally outside this issue.
+
+For the Issue #4 provisioning service, see [the provisioning guide](../../docs/provisioning.md).
+Use an explicitly isolated existing bridge, an allowlisted fixed MAC, and a disk
+serial matched by autoinstall. Override the small blank-VM defaults with at least
+8 GiB RAM and 20 GiB disk for the Ubuntu installer. Do not attach a provisioning
+service to the management bridge or create a new host network as an implicit step.
 
 ## Ownership and state safety
 

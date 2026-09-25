@@ -44,10 +44,12 @@ resource "proxmox_virtual_environment_vm" "labfleet" {
     interface    = "scsi0"
     size         = var.disk_gib
     file_format  = "raw"
+    serial       = var.disk_serial_prefix == null ? null : "${var.disk_serial_prefix}-${var.first_vm_id + count.index}"
   }
 
   network_device {
-    bridge = var.network_bridge
-    model  = "virtio"
+    bridge      = var.network_bridge
+    model       = "virtio"
+    mac_address = length(var.vm_mac_addresses) == 0 ? null : var.vm_mac_addresses[count.index]
   }
 }

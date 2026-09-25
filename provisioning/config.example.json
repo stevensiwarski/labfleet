@@ -1,0 +1,18 @@
+{
+  "service_hostname": "labfleet-pxe-example",
+  "interface": "prov0",
+  "expected_mac": "02:00:00:00:00:01",
+  "address": "192.0.2.1/24",
+  "service_ip": "192.0.2.1",
+  "target_ip": "192.0.2.10",
+  "subnet": "192.0.2.0/24",
+  "target_mac": "02:00:00:00:00:04",
+  "target_hostname": "labfleet-issue4-test-01",
+  "username": "fleet",
+  "disk_serial": "SQEMU_QEMU_HARDDISK_labfleet-pxe-930004",
+  "ssh_key_path": "/etc/labfleet/operator.pub",
+  "artifacts": "/var/lib/labfleet/provisioning/artifacts",
+  "output": "/var/lib/labfleet/provisioning/runtime",
+  "http_port": 8080,
+  "dnsmasq": "/usr/sbin/dnsmasq"
+}

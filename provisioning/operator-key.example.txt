@@ -1,0 +1,3 @@
+# Supply one approved ssh-ed25519 public key in an external local file.
+# This placeholder is intentionally not accepted as a valid SSH key.
+ssh-ed25519 REPLACE_WITH_APPROVED_PUBLIC_KEY

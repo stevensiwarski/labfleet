@@ -1,0 +1,10 @@
+{
+  "hostname": "labfleet-provisioner",
+  "ownership_tag": "labfleet",
+  "management_mac": "02:00:00:00:04:01",
+  "provisioning_mac": "02:00:00:00:04:02",
+  "provisioning_cidr": "192.0.2.2/24",
+  "username": "fleet",
+  "ssh_public_key_file": "/private/labfleet/operator.pub",
+  "output": "/private/labfleet/new-seed"
+}

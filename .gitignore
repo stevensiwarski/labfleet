@@ -41,6 +41,8 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 !infra/opentofu/example.tfvars
+!infra/opentofu/provisioner/example.tfvars
+!provisioning/vm.example.tfvars
 
 # OpenTofu JSON plans can include environment-specific state and values.
 *.tfplan.json
@@ -48,6 +50,14 @@ crash.*.log
 # Local plan files
 *.tfplan
 tfplan
+
+# PXE configuration, generated seeds, leases, and large verified artifacts.
+provisioning/.local/
+provisioning/cache/
+provisioning/generated/
+provisioning/config.local.json
+*.iso
+*.img
 
 # Override files
 override.tf
