@@ -60,12 +60,15 @@ private keys on the controller; do not copy keys to the provisioner, enable agen
 forwarding, or disable host-key checks as a shortcut. Supply privilege-escalation
 credentials through an external secret mechanism or `--ask-become-pass`.
 
-**Existing PXE caveat:** Issue #4's `fleet` account has key access but no usable
-password and no passwordless sudo. That alone is not an Ansible `become` path.
-An independently authorized administrative path must exist on a disposable
-target before using this playbook. These roles do not bootstrap broad sudo
-privileges, create permanent administrators, or modify the provisioner to obtain
-access.
+**PXE node profile:** The default Issue #4 account has key access but no usable
+password or sudo password. For unattended configuration, the provisioning renderer
+now offers explicit `passwordless_sudo: true`, scoped to the disposable guest's
+existing `fleet` user. Root-owned mode-0440 sudoers is validated with `visudo`.
+This root-equivalent privilege is necessary for apt, systemd, kernel and system-file
+management, not granted to the controller or provisioner. Ansible itself does not
+grant administrative access. Pair this opt-in with the dual-NIC management uplink
+documented in [provisioning](../docs/provisioning.md); no provisioner routing is
+needed. Direct management SSH uses the same strict public-key/host-key policy.
 
 ## Safety preflight
 
@@ -98,7 +101,7 @@ CLI flags are privileged automation code, not an adversarial security sandbox.
 | `ssh` | Key-only non-root SSH drop-in, validation before handler-driven reload, reconnect check; `ssh_config_path` |
 | `time` | Installed/enabled systemd-timesyncd, optional source list, bounded synchronization verification; `time_ntp_servers`, `time_wait_for_sync` (true) |
 | `kubernetes_prereqs` | Swap disabled, active fstab swap entries commented, modules and networking sysctls persisted and checked; `kubernetes_prereqs_kernel_modules`, `kubernetes_prereqs_sysctls` |
-| `containerd` | Ubuntu containerd 1.7 package, CRI enabled, runc with systemd cgroups, restart only on configuration changes, CRI health check; `containerd_config_path` |
+| `containerd` | Ubuntu containerd 1.7 or 2.2 package, version-aware CRI configuration, runc/systemd cgroups, handler-driven restart, CRI health check; `containerd_config_path` |
 
 Base tools include CA certificates, curl, GnuPG, iproute2, OpenSSH, Python, sudo,
 conntrack, socat, kmod, procps and util-linux. Existing account/key files are not
@@ -120,9 +123,13 @@ for the future kubelet's default fail-on-swap architecture. Enabled custom
 systemd swap units or remaining active swap cause a failure instead of a false
 readiness claim; nonstandard zram/generator services require separate review.
 
-The minimal containerd v2 configuration enables the CRI plugin and selects
-`io.containerd.runc.v2` with `SystemdCgroup = true`. It is guarded to containerd
-1.7; containerd 2.x is not silently configured using the older plugin layout.
+The role detects the installed version: containerd 1.7 receives config version 2;
+containerd 2.2 receives config version 3 with separate CRI runtime/images plugins
+and the v3 pinned sandbox image location. Both select `io.containerd.runc.v2` with
+`SystemdCgroup = true`. Other minor families fail closed pending validation.
+Ubuntu 24.04's current 2.2 package is used rather than pinning an obsolete 1.7
+package. On a pristine check-mode host with no binary, the template preview uses
+version 3, without claiming an installed or verified runtime.
 No Kubernetes version, package repository, CNI, registry authentication,
 kubeconfig, cluster certificate, or control-plane configuration is introduced.
 

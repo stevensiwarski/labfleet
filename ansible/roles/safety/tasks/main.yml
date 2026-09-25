@@ -47,6 +47,7 @@
       - min
       - hardware
       - network
+      - virtual
   become: true
 
 - name: Validate guest identity

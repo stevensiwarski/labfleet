@@ -33,6 +33,11 @@ VARS = {
 
 
 class SafetyTests(unittest.TestCase):
+    def test_required_identity_fact_collectors_are_requested(self):
+        tasks = yaml.safe_load((ROOT / "roles/safety/tasks/main.yml").read_text())
+        setup = next(t["ansible.builtin.setup"] for t in tasks if "ansible.builtin.setup" in t)
+        self.assertTrue({"hardware", "network", "virtual"}.issubset(setup["gather_subset"]))
+
     def invoke(self, stage, overrides=None, group="labfleet_nodes", full=False, extra_args=()):
         values = copy.deepcopy(VARS)
         values.update(overrides or {})

@@ -25,6 +25,48 @@ run "explicit_provisioning_identity" {
   }
 }
 
+run "dual_nic_keeps_provisioning_identity_on_net1" {
+  command = plan
+  variables {
+    management_network_bridge = "management-example"
+    management_mac_addresses  = ["02:00:00:00:10:04"]
+    guest_agent_enabled       = true
+  }
+  assert {
+    condition     = length(proxmox_virtual_environment_vm.labfleet[0].network_device) == 2 && proxmox_virtual_environment_vm.labfleet[0].network_device[0].bridge == "management-example" && proxmox_virtual_environment_vm.labfleet[0].network_device[0].mac_address == "02:00:00:00:10:04"
+    error_message = "NIC0 must be management with its optional explicit MAC."
+  }
+  assert {
+    condition     = proxmox_virtual_environment_vm.labfleet[0].network_device[1].bridge == "isolated-example" && proxmox_virtual_environment_vm.labfleet[0].network_device[1].mac_address == "02:00:00:00:00:04" && proxmox_virtual_environment_vm.labfleet[0].boot_order == tolist(["net1", "scsi0"])
+    error_message = "NIC1 must retain provisioning identity and receive PXE boot priority."
+  }
+  assert {
+    condition     = proxmox_virtual_environment_vm.labfleet[0].agent[0].enabled
+    error_message = "Guest agent must be enabled when explicitly opted in."
+  }
+}
+
+run "reject_same_management_and_provisioning_bridge" {
+  command = plan
+  variables { management_network_bridge = "isolated-example" }
+  expect_failures = [var.management_network_bridge]
+}
+
+run "reject_management_mac_without_bridge" {
+  command = plan
+  variables { management_mac_addresses = ["02:00:00:00:10:04"] }
+  expect_failures = [var.management_mac_addresses]
+}
+
+run "reject_duplicate_cross_nic_macs" {
+  command = plan
+  variables {
+    management_network_bridge = "management-example"
+    management_mac_addresses  = ["02:00:00:00:00:04"]
+  }
+  expect_failures = [var.management_mac_addresses]
+}
+
 run "reject_duplicate_macs" {
   command = plan
   variables {
@@ -67,4 +109,14 @@ run "reject_overlong_disk_serial" {
     disk_serial_prefix = "labfleet-tests"
   }
   expect_failures = [var.disk_serial_prefix]
+}
+run "reject_cross_vm_mac_reuse" {
+  command = plan
+  variables {
+    vm_count                  = 2
+    management_network_bridge = "management-test"
+    vm_mac_addresses          = ["02:00:00:00:00:0a", "02:00:00:00:00:0b"]
+    management_mac_addresses  = ["02:00:00:00:00:0B", "02:00:00:00:00:0c"]
+  }
+  expect_failures = [var.management_mac_addresses]
 }

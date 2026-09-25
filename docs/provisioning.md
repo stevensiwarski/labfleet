@@ -196,6 +196,36 @@ tests instead of downloading new artifacts on each boot.
 
 ## Local configuration and credentials
 
+### Optional configuration-management node profile
+
+The single-NIC, no-passwordless-sudo defaults remain unchanged. For a disposable
+node that needs package/DNS/NTP access and unattended Ansible:
+
+- OpenTofu: set `management_network_bridge` to an existing management bridge,
+  `management_mac_addresses` to the new guest's NIC0 MAC, and
+  `guest_agent_enabled = true`. Provisioning identity remains in
+  `network_bridge`/`vm_mac_addresses` on NIC1; firmware boots `net1;scsi0`.
+- PXE JSON: supply that NIC0 MAC as `management_mac`; `target_mac` remains the
+  isolated PXE NIC MAC. The iPXE command line uses `BOOTIF` to select only that
+  MAC for initramfs DHCP. This behavior was checked in the pinned ISO's initrd.
+- Autoinstall names the interfaces `mgmt0` and `prov0`. Management uses DHCP with
+  route metric 100. Provisioning rejects DHCP routes/DNS, disables IPv6 RA/DHCPv6,
+  and advertises no default route. No routing/NAT is enabled on the provisioner.
+- The dual-NIC seed installs/enables `qemu-guest-agent` for authenticated API
+  discovery of the management address and SSH host key.
+- Explicit `passwordless_sudo: true` creates a root-owned mode-0440 sudoers
+  drop-in for the configured node user, validated with `visudo`. This is required
+  for unattended Ansible's apt/systemd/kernel/sysctl/file operations when the user
+  has a locked password. It grants root-equivalent local administration **only on
+  the opt-in disposable node**, never on the controller or provisioner. SSH
+  remains key-only and remote root access stays disabled.
+
+When changing the target MAC, use a distinct unused isolated reservation or
+review the stopped service's obsolete lease explicitly. The existing infinite
+lease must not be silently reused by another MAC. Restore the normal local
+profile and stop test PXE services after validation. Real addresses, keys and
+profile files remain private.
+
 Use the committed example as a shape reference only. Its documentation addresses,
 MACs, paths, and key placeholder are not deployable lab configuration. Supply
 approved local values for the service host identity, dedicated interface/MAC,

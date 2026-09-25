@@ -70,6 +70,8 @@
       - -w
       - "{{ item.item.key }}={{ item.item.value }}"
   loop: "{{ kubernetes_prereqs_sysctl_current.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
   when:
     - not ansible_check_mode
     - item.stdout | trim != item.item.value | string
@@ -92,6 +94,8 @@
       - item.stdout | trim == item.item.value | string
     fail_msg: "{{ item.item.key }} is not {{ item.item.value }} on {{ inventory_hostname }}."
   loop: "{{ kubernetes_prereqs_sysctl_verified.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
   when: not ansible_check_mode
 
 - name: Find enabled systemd swap units
@@ -102,14 +106,23 @@
       - --type=swap
       - --state=enabled
       - --no-legend
+      - --no-pager
+      - --output=json
   register: kubernetes_prereqs_enabled_swap_units
   changed_when: false
+  # systemd 255 returns 1 for an empty filtered list, including JSON [].
+  # Accept only that exact empty-success shape, not arbitrary command failures.
+  failed_when: >-
+    kubernetes_prereqs_enabled_swap_units.rc != 0 and not
+    (kubernetes_prereqs_enabled_swap_units.rc == 1 and
+    kubernetes_prereqs_enabled_swap_units.stdout | trim == '[]' and
+    kubernetes_prereqs_enabled_swap_units.stderr | trim == '')
   when: not ansible_check_mode
 
 - name: Require no enabled systemd swap units
   ansible.builtin.assert:
     that:
-      - kubernetes_prereqs_enabled_swap_units.stdout | trim | length == 0
+      - kubernetes_prereqs_enabled_swap_units.stdout | from_json | length == 0
     fail_msg: "Enabled systemd swap units remain on {{ inventory_hostname }}; disable the owning unit before Kubernetes workloads are deployed."
   when: not ansible_check_mode
 

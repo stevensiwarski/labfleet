@@ -19,6 +19,11 @@
   delay: 10
   until: containerd_containerd_package is succeeded
 
+- name: Detect installed containerd binary
+  ansible.builtin.stat:
+    path: /usr/bin/containerd
+  register: containerd_containerd_binary
+
 - name: Read installed containerd version
   ansible.builtin.command:
     argv:
@@ -26,14 +31,30 @@
       - --version
   register: containerd_containerd_version
   changed_when: false
-  when: not ansible_check_mode
+  check_mode: false
+  when: containerd_containerd_binary.stat.exists
 
-- name: Require containerd 1.7 before writing v2 configuration
+- name: Select containerd configuration major
+  ansible.builtin.set_fact:
+    containerd_config_major: >-
+      {{ (containerd_containerd_version.stdout | regex_findall('containerd.* ([0-9]+)[.][0-9]+[.][0-9]+') | first)
+      if containerd_containerd_binary.stat.exists else '2' }}
+
+- name: Require supported containerd version
   ansible.builtin.assert:
     that:
-      - "containerd_containerd_version.stdout is search('containerd.* 1[.]7[.][0-9]+(?: |$)')"
-    fail_msg: "This configuration requires containerd 1.7; found {{ containerd_containerd_version.stdout }} on {{ inventory_hostname }}."
-  when: not ansible_check_mode
+      - containerd_config_major in ['1', '2']
+      - >-
+        containerd_config_major != '1' or containerd_containerd_version.stdout is
+        search('containerd.* 1[.]7[.][0-9]+(?:[-+ ]|$)')
+      - >-
+        containerd_config_major != '2' or containerd_containerd_version.stdout is
+        search('containerd.* 2[.]2[.][0-9]+(?:[-+ ]|$)')
+    fail_msg: >-
+      This role supports containerd 1.7 and 2.2; found
+      {{ containerd_containerd_version.stdout | default('no installed binary (check mode assumes 2.x)') }}
+      on {{ inventory_hostname }}.
+  when: containerd_containerd_binary.stat.exists
 
 - name: Configure containerd CRI and systemd cgroups
   ansible.builtin.template:
@@ -66,6 +87,10 @@
 - name: Require healthy containerd CRI plugin
   ansible.builtin.assert:
     that:
-      - containerd_containerd_plugins.stdout is search('io.containerd.grpc.v1.*cri.*ok')
-    fail_msg: "containerd CRI plugin is not healthy on {{ inventory_hostname }}."
+      - >-
+        (containerd_containerd_plugins.stdout is search('(?m)^io[.]containerd[.]grpc[.]v1 +cri +.* +ok *$')
+        if containerd_config_major == '1' else
+        containerd_containerd_plugins.stdout is search('(?m)^io[.]containerd[.]cri[.]v1 +images +.* +ok *$') and
+        containerd_containerd_plugins.stdout is search('(?m)^io[.]containerd[.]cri[.]v1 +runtime +.* +ok *$'))
+    fail_msg: "containerd CRI plugin(s) are not healthy on {{ inventory_hostname }}."
   when: not ansible_check_mode

@@ -31,6 +31,41 @@ func TestConfigRejectsInjectionAndInvalidTarget(t *testing.T) {
 	}
 }
 
+func TestOptionalManagementNICAndPasswordlessSudoRendering(t *testing.T) {
+	c := testConfig()
+	c.SSHKeyPath = writeKey(t)
+	files, err := Render(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := string(files["user-data"])
+	if strings.Contains(base, "network:\n") || strings.Contains(base, "NOPASSWD") || strings.Contains(base, "qemu-guest-agent") {
+		t.Fatal("default config must retain single-NIC and no-sudo behavior without guest agent")
+	}
+	c.ManagementMAC = "02:00:00:00:00:03"
+	c.PasswordlessSudo = true
+	files, err = Render(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := string(files["user-data"])
+	for _, want := range []string{"version: 2", `macaddress: "02:00:00:00:00:03"`, `macaddress: "02:00:00:00:00:02"`, "route-metric: 100", "route-metric: 1000", "use-routes: false", "use-dns: false", "optional: true", "qemu-guest-agent", "systemctl, enable, qemu-guest-agent", "90-labfleet-fleet", "fleet ALL=(ALL:ALL) NOPASSWD: ALL", "disable_root: true", "allow-pw: false", "ssh_pwauth: false", "visudo -c"} {
+		if !strings.Contains(u, want) {
+			t.Errorf("opt-in render missing %q", want)
+		}
+	}
+	if !strings.Contains(string(files["boot.ipxe"]), "BOOTIF=01-02-00-00-00-00-02 ip=dhcp") {
+		t.Fatalf("dual-NIC initramfs must select the provisioning NIC by its MAC: %s", files["boot.ipxe"])
+	}
+	for _, invalid := range []string{"02:00:00:00:00:02", "01:00:00:00:00:03", "00:00:00:00:00:03", "not-a-mac"} {
+		bad := c
+		bad.ManagementMAC = invalid
+		if bad.Validate() == nil {
+			t.Errorf("accepted invalid management MAC %q", invalid)
+		}
+	}
+}
+
 func testConfig() Config {
 	return Config{ServiceHostname: "labfleet-svc", Interface: "enp2s0", ExpectedMAC: "02:00:00:00:00:01", Address: "192.0.2.1/24", ServiceIP: "192.0.2.1", TargetIP: "192.0.2.2", Subnet: "192.0.2.0/24", TargetMAC: "02:00:00:00:00:02", TargetHostname: "labfleet-node", Username: "fleet", DiskSerial: "0QEMU_QEMU_HARDDISK_labfleet-pxe-930004", SSHKeyPath: "/tmp/key", Artifacts: "/tmp/artifacts", Output: "/tmp/out", HTTPPort: 8080, Dnsmasq: "/usr/sbin/dnsmasq"}
 }
@@ -71,6 +106,9 @@ func TestRenderIsOfflineAndPinnedTargetsAreExact(t *testing.T) {
 	}
 	if strings.Contains(boot, "callback") {
 		t.Fatal("unexpected callback")
+	}
+	if strings.Contains(boot, "BOOTIF=") {
+		t.Fatal("single-NIC boot must retain the existing DHCP selection")
 	}
 	u := string(files["user-data"])
 	if !strings.Contains(u, "early-commands:") || !strings.Contains(u, "/disk-select") || !strings.Contains(u, "chmod 0700") || !strings.Contains(u, "--expected-id "+c.DiskSerial+" --autoinstall /autoinstall.yaml") {

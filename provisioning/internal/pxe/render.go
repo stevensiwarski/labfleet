@@ -11,6 +11,63 @@ import (
 )
 
 func q(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+func networkConfig(c Config) string {
+	if c.ManagementMAC == "" {
+		return ""
+	}
+	return fmt.Sprintf(`  network:
+    version: 2
+    ethernets:
+      mgmt0:
+        match:
+          macaddress: %s
+        set-name: mgmt0
+        dhcp4: true
+        dhcp6: false
+        accept-ra: false
+        dhcp4-overrides:
+          route-metric: 100
+      prov0:
+        match:
+          macaddress: %s
+        set-name: prov0
+        dhcp4: true
+        dhcp6: false
+        accept-ra: false
+        dhcp4-overrides:
+          use-routes: false
+          use-dns: false
+          route-metric: 1000
+        optional: true`, q(c.ManagementMAC), q(c.TargetMAC))
+}
+
+func packageConfig(c Config) string {
+	if c.ManagementMAC == "" {
+		return ""
+	}
+	return "  packages:\n    - qemu-guest-agent"
+}
+
+func sudoLateCommand(c Config) string {
+	commands := []string{}
+	if c.ManagementMAC != "" {
+		commands = append(commands, "[curtin, in-target, --target=/target, --, systemctl, enable, qemu-guest-agent]")
+	}
+	if c.PasswordlessSudo {
+		command := fmt.Sprintf("install -o root -g root -m 0440 /dev/null /etc/sudoers.d/90-labfleet-fleet && printf '%%s\\n' '%s ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-labfleet-fleet && visudo -cf /etc/sudoers.d/90-labfleet-fleet && visudo -c", c.Username)
+		commands = append(commands, "[curtin, in-target, --target=/target, --, sh, -c, "+q(command)+"]")
+	}
+	if len(commands) == 0 {
+		return ""
+	}
+	result := "  late-commands:\n"
+	for _, command := range commands {
+		result += "    - " + command + "\n"
+	}
+	return strings.TrimSuffix(result, "\n")
+}
+
 func Render(c Config) (map[string][]byte, error) {
 	if e := c.Validate(); e != nil {
 		return nil, e
@@ -20,19 +77,27 @@ func Render(c Config) (map[string][]byte, error) {
 		return nil, e
 	}
 	base := fmt.Sprintf("http://%s:%d", c.ServiceIP, c.HTTPPort)
+	bootif := ""
+	if c.ManagementMAC != "" {
+		mac, _ := net.ParseMAC(c.TargetMAC)
+		bootif = "BOOTIF=01-" + strings.ReplaceAll(strings.ToLower(mac.String()), ":", "-") + " "
+	}
 	boot := fmt.Sprintf(`#!ipxe
 sanboot --no-describe --drive 0x80 || goto install
 :install
-kernel %s/vmlinuz initrd=initrd autoinstall ip=dhcp url=%s/ubuntu.iso ds=nocloud-net;s=%s/seed/ cloud-config-url=/dev/null
+kernel %s/vmlinuz initrd=initrd autoinstall %sip=dhcp url=%s/ubuntu.iso ds=nocloud-net;s=%s/seed/ cloud-config-url=/dev/null
 initrd %s/initrd
 boot
-`, base, base, base, base)
+`, base, bootif, base, base, base)
 	user := fmt.Sprintf(`#cloud-config
 autoinstall:
   version: 1
+%s
+%s
   interactive-sections: []
   early-commands:
     - [sh, -c, %s]
+%s
   refresh-installer:
     update: false
   apt:
@@ -59,7 +124,7 @@ autoinstall:
       match:
         serial: %s
   shutdown: reboot
-`, q(fmt.Sprintf("wget -q -O /usr/local/sbin/labfleet-disk-select %s/disk-select && chmod 0700 /usr/local/sbin/labfleet-disk-select && /usr/local/sbin/labfleet-disk-select --expected-id %s --autoinstall /autoinstall.yaml", base, c.DiskSerial)), q("en_US.UTF-8"), q(c.TargetHostname), q(c.Username), q(key), q(c.DiskSerial))
+`, networkConfig(c), packageConfig(c), q(fmt.Sprintf("wget -q -O /usr/local/sbin/labfleet-disk-select %s/disk-select && chmod 0700 /usr/local/sbin/labfleet-disk-select && /usr/local/sbin/labfleet-disk-select --expected-id %s --autoinstall /autoinstall.yaml", base, c.DiskSerial)), sudoLateCommand(c), q("en_US.UTF-8"), q(c.TargetHostname), q(c.Username), q(key), q(c.DiskSerial))
 	meta := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", q(c.TargetHostname), q(c.TargetHostname))
 	_, network, _ := net.ParseCIDR(c.Subnet)
 	mask := net.IP(network.Mask).String()
