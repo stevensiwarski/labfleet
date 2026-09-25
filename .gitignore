@@ -40,6 +40,10 @@ crash.*.log
 # Local variable files may contain credentials/IPs
 *.tfvars
 *.tfvars.json
+!infra/opentofu/example.tfvars
+
+# OpenTofu JSON plans can include environment-specific state and values.
+*.tfplan.json
 
 # Local plan files
 *.tfplan
