@@ -1,0 +1,19 @@
+{
+  "repo_root": "/workspace/labfleet",
+  "work_dir": "/tmp/labfleet-fleetctl",
+  "tofu": "tofu",
+  "ansible_playbook": "ansible-playbook",
+  "kubectl": "kubectl",
+  "timeout_seconds": 1800,
+  "default_target": "issue13-example",
+  "targets": {
+    "issue13-example": {
+      "kind": "vm",
+      "tofu_root": "infra/opentofu",
+      "vars_file": "infra/opentofu/issue13-private.tfvars",
+      "vms": [
+        { "id": 900013, "name": "labfleet-issue13-test-01", "node": "REPLACE_WITH_LAB_NODE", "role": "disposable", "tags": ["labfleet", "disposable", "issue13"] }
+      ]
+    }
+  }
+}

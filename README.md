@@ -37,7 +37,7 @@ See [AGENTS.md](AGENTS.md) for the operating rules.
 
 ## Repository layout
 
-- `cmd/fleetctl/` — CLI scaffold and implemented ownership-plan checker
+- `cmd/fleetctl/` — Go fleet operations CLI and ownership-plan checker
 - `cmd/node-doctor/` — placeholder for planned node diagnostics
 - `internal/` — private reusable Go packages
 - `infra/opentofu/` — guarded VM lifecycle, persistent provisioner, and six-node cluster infrastructure
@@ -70,3 +70,7 @@ procedures, and limitations.
 Requires Go 1.26 or newer and Make. Run `make fmt` to format Go sources,
 `make test` to run tests, `make lint` for formatting and `go vet` checks, and
 `make build` to build both binaries into `bin/`.
+
+The operator CLI provides fleet discovery, status and validation alongside
+guarded, phased provision/destroy workflows. See the [`fleetctl` operator guide](docs/fleetctl.md)
+for private configuration, command semantics, exit codes, and safety boundaries.
