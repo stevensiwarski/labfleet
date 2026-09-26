@@ -3,8 +3,8 @@
 LabFleet is a Go-based systems platform for automated Linux and Kubernetes fleet
 provisioning, diagnostics, observability, failure recovery, and distributed
 data-ingest experiments. Infrastructure provisioning, host configuration, and
-Kubernetes bootstrap are implemented; diagnostics, observability, ingest, and
-chaos/failure testing remain future roadmap work.
+Kubernetes bootstrap and node diagnostics are implemented; observability, ingest,
+and the chaos/failure-testing framework remain future roadmap work.
 
 ## Architecture
 
@@ -20,9 +20,10 @@ OpenTofu -> guarded LabFleet-owned VM lifecycle
 
 `fleetctl tofu-check` guards infrastructure plans using live ownership evidence.
 Go provisioning services and Ansible playbooks automate the node and cluster
-workflows; reusable Go logic lives in `internal/`. Node diagnostics through
-`node-doctor`, observability, distributed ingest, chaos/failure testing, and later
-roadmap capabilities remain planned, not implemented.
+workflows; reusable Go logic lives in `internal/`. `node-doctor` diagnoses Linux,
+networking, containerd, and Kubernetes through owned-node Go probes and shared
+cluster inspection. Observability, distributed ingest, and the chaos/failure-testing
+framework remain planned, not implemented.
 
 ### Infrastructure boundaries
 
@@ -38,7 +39,7 @@ See [AGENTS.md](AGENTS.md) for the operating rules.
 ## Repository layout
 
 - `cmd/fleetctl/` — Go fleet operations CLI and ownership-plan checker
-- `cmd/node-doctor/` — placeholder for planned node diagnostics
+- `cmd/node-doctor/` — bounded Go infrastructure diagnostics CLI and remote probe
 - `internal/` — private reusable Go packages
 - `infra/opentofu/` — guarded VM lifecycle, persistent provisioner, and six-node cluster infrastructure
 - `ansible/` — host configuration, kubeadm bootstrap, Cilium installation, and cluster validation
@@ -61,7 +62,11 @@ See [AGENTS.md](AGENTS.md) for the operating rules.
   destroy/recreate cycle. The final cluster is retained; its cp-01 API endpoint
   is not itself highly available.
 
-`node-doctor`, observability, distributed ingest, and chaos/failure testing remain
+- [Node diagnostics](docs/node-doctor.md) are implemented and live validated:
+  healthy control-plane/worker/cluster checks, detection of a controlled worker
+  containerd failure, and recovery to **6/6 Ready** with healthy system pods.
+
+Observability, distributed ingest, and the chaos/failure-testing framework remain
 future roadmap work. The linked guides contain validation evidence, operating
 procedures, and limitations.
 
