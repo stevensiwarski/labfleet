@@ -1,0 +1,15 @@
+---
+cilium_version: 1.20.2
+cilium_chart_sha256: b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e
+cilium_chart_url: https://helm.cilium.io/cilium-1.20.2.tgz
+cilium_chart_cache: /var/cache/labfleet/cilium-1.20.2.tgz
+cilium_release_name: cilium
+cilium_namespace: kube-system
+cilium_values_path: /etc/labfleet/cilium-values.yaml
+cilium_kubeconfig: /etc/kubernetes/admin.conf
+cilium_management_device: mgmt0
+cilium_pod_cidr: 10.244.0.0/16
+cilium_helm_binary: /usr/local/bin/helm
+cilium_helm_version: v3.17.3
+cilium_helm_sha256: ee88b3c851ae6466a3de507f7be73fe94d54cbf2987cbaa3d1a3832ea331f2cd
+cilium_helm_archive: /var/cache/labfleet/helm-v3.17.3-linux-amd64.tar.gz

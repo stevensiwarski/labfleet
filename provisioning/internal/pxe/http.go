@@ -16,7 +16,26 @@ func Handler(c Config) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, e := net.SplitHostPort(r.RemoteAddr)
-		if e != nil || net.ParseIP(ip) == nil || !net.ParseIP(ip).Equal(net.ParseIP(c.TargetIP)) {
+		if e != nil || net.ParseIP(ip) == nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		clientIP := net.ParseIP(ip)
+		selected := c
+		if len(c.Targets) > 0 {
+			found := false
+			for _, target := range c.Targets {
+				if clientIP.Equal(net.ParseIP(target.TargetIP)) {
+					selected.TargetIP, selected.TargetMAC, selected.TargetHostname, selected.DiskSerial, selected.ManagementMAC = target.TargetIP, target.TargetMAC, target.TargetHostname, target.DiskSerial, target.ManagementMAC
+					found = true
+					break
+				}
+			}
+			if !found {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if !clientIP.Equal(net.ParseIP(c.TargetIP)) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -35,6 +54,13 @@ func Handler(c Config) http.Handler {
 		}
 		var filename string
 		if name == "user-data" || name == "meta-data" || name == "boot.ipxe" {
+			if len(c.Targets) > 0 {
+				if name == "boot.ipxe" {
+					name = "boot-" + selected.TargetHostname + ".ipxe"
+				} else {
+					name += "-" + selected.TargetHostname
+				}
+			}
 			filename = path.Join(c.Output, name)
 		} else {
 			filename = path.Join(c.Artifacts, name)

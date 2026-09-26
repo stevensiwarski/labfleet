@@ -69,6 +69,7 @@
       - safety_cluster_markers.results | selectattr('stat.exists') | list | length == 0
     fail_msg: "This playbook prepares disposable pre-cluster nodes only."
     quiet: true
+  when: safety_reject_existing_cluster | default(true) | bool
 
 - name: Record completed preflight for the current play
   ansible.builtin.set_fact:

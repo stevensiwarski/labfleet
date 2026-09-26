@@ -1,0 +1,20 @@
+---
+- name: Read worker node labels before applying role labels
+  ansible.builtin.command:
+    argv: [kubectl, get, node, "{{ item }}", -o, json]
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  loop: "{{ groups.labfleet_workers }}"
+  register: worker_labels_nodes
+  changed_when: false
+
+- name: Label workers only when their explicit role label is absent
+  ansible.builtin.command:
+    argv: [kubectl, label, node, "{{ item.item }}", "node-role.kubernetes.io/worker="]
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  loop: "{{ worker_labels_nodes.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: "'node-role.kubernetes.io/worker' not in (item.stdout | from_json).metadata.labels"
+  changed_when: true

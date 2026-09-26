@@ -1,0 +1,159 @@
+---
+- name: Require explicit management IPv4 for kubeadm
+  ansible.builtin.assert:
+    that:
+      - kubernetes_node_ip is defined
+      - kubernetes_control_plane_endpoint is defined
+      - kubernetes_version is defined
+      - kubernetes_package_version is defined
+
+- name: Inspect kubeadm state
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/kubernetes/kubelet.conf
+    - /etc/kubernetes/admin.conf
+    - /etc/kubernetes/pki/ca.crt
+  register: kubeadm_control_plane_state_files
+  check_mode: false
+
+- name: Reject incomplete kubeadm state
+  ansible.builtin.assert:
+    that:
+      - >-
+        (kubeadm_control_plane_state_files.results | selectattr('stat.exists') | list | length) in [0, 3]
+    fail_msg: Incomplete Kubernetes control-plane state detected; refusing to reset or reinitialize.
+
+- name: Determine whether any nodes still need to join
+  ansible.builtin.set_fact:
+    kubeadm_control_plane_unjoined_nodes: >-
+      {{ groups['labfleet_nodes'] | map('extract', hostvars)
+         | selectattr('kubernetes_join_state.stat.exists', 'equalto', false)
+         | map(attribute='inventory_hostname') | list }}
+  when: inventory_hostname == groups['labfleet_control_plane'][0]
+
+- name: Create Kubernetes configuration directory
+  ansible.builtin.file:
+    path: /etc/kubernetes
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname == groups['labfleet_control_plane'][0] and not kubeadm_control_plane_state_files.results[0].stat.exists
+
+- name: Write private kubeadm init configuration
+  ansible.builtin.template:
+    src: cluster-config.yaml.j2
+    dest: /etc/kubernetes/kubeadm-config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == groups['labfleet_control_plane'][0] and not kubeadm_control_plane_state_files.results[0].stat.exists
+
+- name: Validate kubeadm init configuration
+  ansible.builtin.command:
+    argv: [kubeadm, config, validate, --config, /etc/kubernetes/kubeadm-config.yaml]
+  changed_when: false
+  when: inventory_hostname == groups['labfleet_control_plane'][0] and not kubeadm_control_plane_state_files.results[0].stat.exists
+
+- name: Initialize first control plane
+  ansible.builtin.command:
+    argv: [kubeadm, init, --config, /etc/kubernetes/kubeadm-config.yaml]
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - not kubeadm_control_plane_state_files.results[0].stat.exists
+  register: kubeadm_control_plane_init_result
+  changed_when: kubeadm_control_plane_init_result.rc == 0
+  no_log: true
+
+- name: Create short-lived join token
+  ansible.builtin.command:
+    argv: [kubeadm, token, create, --ttl, 1h]
+  register: kubeadm_control_plane_token_result
+  changed_when: true
+  no_log: true
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_unjoined_nodes | length > 0
+
+- name: Read cluster CA certificate hash
+  ansible.builtin.shell: >-
+    set -o pipefail && openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt |
+    openssl pkey -pubin -outform DER | sha256sum | awk '{print "sha256:" $1}'
+  args:
+    executable: /bin/bash
+  register: kubeadm_control_plane_ca_hash_result
+  changed_when: false
+  no_log: true
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_unjoined_nodes | length > 0
+
+- name: Create certificate encryption key for additional control planes
+  ansible.builtin.command:
+    argv: [kubeadm, certs, certificate-key]
+  register: kubeadm_control_plane_certificate_key_result
+  changed_when: false
+  no_log: true
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_unjoined_nodes | intersect(groups['labfleet_control_plane'][1:]) | length > 0
+
+- name: Upload control-plane certificates
+  ansible.builtin.command:
+    argv:
+      - kubeadm
+      - init
+      - phase
+      - upload-certs
+      - --upload-certs
+      - --certificate-key
+      - "{{ kubeadm_control_plane_certificate_key_result.stdout }}"
+  no_log: true
+  changed_when: true
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_unjoined_nodes | intersect(groups['labfleet_control_plane'][1:]) | length > 0
+
+- name: Publish ephemeral join material to controller facts
+  ansible.builtin.set_fact:
+    kubeadm_control_plane_join_token: "{{ kubeadm_control_plane_token_result.stdout }}"
+    kubeadm_control_plane_ca_hash: "{{ kubeadm_control_plane_ca_hash_result.stdout }}"
+    kubeadm_control_plane_certificate_key: "{{ kubeadm_control_plane_certificate_key_result.stdout | default('') }}"
+    cacheable: false
+  no_log: true
+  when:
+    - inventory_hostname == groups['labfleet_control_plane'][0]
+    - hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_unjoined_nodes | length > 0
+
+- name: Join additional control plane with ephemeral configuration
+  when:
+    - inventory_hostname != groups['labfleet_control_plane'][0]
+    - not kubeadm_control_plane_state_files.results[0].stat.exists
+  block:
+    - name: Write private control-plane join configuration
+      ansible.builtin.template:
+        src: join-config.yaml.j2
+        dest: /etc/kubernetes/kubeadm-join.yaml
+        owner: root
+        group: root
+        mode: '0600'
+      vars:
+        kubeadm_is_control_plane: true
+        kubeadm_control_plane_join_token: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_join_token }}"
+        kubeadm_control_plane_ca_hash: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_ca_hash }}"
+        kubeadm_control_plane_certificate_key: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_certificate_key }}"
+      no_log: true
+      diff: false
+
+    - name: Join additional control plane
+      ansible.builtin.command:
+        argv: [kubeadm, join, --config, /etc/kubernetes/kubeadm-join.yaml]
+      no_log: true
+      changed_when: true
+  always:
+    - name: Remove control-plane join configuration
+      ansible.builtin.file:
+        path: /etc/kubernetes/kubeadm-join.yaml
+        state: absent
+      when: inventory_hostname != groups['labfleet_control_plane'][0]

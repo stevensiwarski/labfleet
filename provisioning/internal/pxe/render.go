@@ -72,6 +72,44 @@ func Render(c Config) (map[string][]byte, error) {
 	if e := c.Validate(); e != nil {
 		return nil, e
 	}
+	if len(c.Targets) > 0 {
+		files := map[string][]byte{}
+		var dns []byte
+		for i, target := range c.Targets {
+			one := c
+			one.Targets = nil
+			one.TargetIP, one.TargetMAC, one.TargetHostname, one.DiskSerial, one.ManagementMAC = target.TargetIP, target.TargetMAC, target.TargetHostname, target.DiskSerial, target.ManagementMAC
+			rendered, err := Render(one)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				dns = rendered["dnsmasq.conf"]
+			}
+			// Common URL, node-specific content: remote address selects the right boot args and seed.
+			files["boot-"+target.TargetHostname+".ipxe"] = rendered["boot.ipxe"]
+			files["user-data-"+target.TargetHostname] = rendered["user-data"]
+			files["meta-data-"+target.TargetHostname] = rendered["meta-data"]
+		}
+		var hosts strings.Builder
+		for _, target := range c.Targets {
+			fmt.Fprintf(&hosts, "dhcp-host=%s,%s,%s,infinite\n", target.TargetMAC, target.TargetIP, target.TargetHostname)
+		}
+		lines := strings.Split(string(dns), "\n")
+		var out strings.Builder
+		for _, line := range lines {
+			if strings.HasPrefix(line, "dhcp-host=") {
+				out.WriteString(hosts.String())
+				continue
+			}
+			if line != "" {
+				out.WriteString(line)
+				out.WriteByte('\n')
+			}
+		}
+		files["dnsmasq.conf"] = []byte(out.String())
+		return files, nil
+	}
 	key, e := ValidateSSHKey(c.SSHKeyPath)
 	if e != nil {
 		return nil, e

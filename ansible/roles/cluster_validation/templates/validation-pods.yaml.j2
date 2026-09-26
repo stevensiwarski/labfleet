@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ cluster_validation_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: labfleet
+    labfleet.io/purpose: cluster-validation
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netcheck-server
+  namespace: {{ cluster_validation_namespace }}
+  labels:
+    app: netcheck-server
+spec:
+  restartPolicy: Always
+  nodeSelector:
+    kubernetes.io/hostname: {{ cluster_validation_workers[0] | to_json }}
+  containers:
+    - name: server
+      image: registry.k8s.io/e2e-test-images/agnhost:2.53
+      args: [serve-hostname, "--http", "--port=8080"]
+      ports:
+        - containerPort: 8080
+          name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netcheck-server
+  namespace: {{ cluster_validation_namespace }}
+spec:
+  selector:
+    app: netcheck-server
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netcheck-client
+  namespace: {{ cluster_validation_namespace }}
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: {{ cluster_validation_workers[1] | to_json }}
+  containers:
+    - name: client
+      image: busybox:1.37.0
+      command: ["sleep", "3600"]

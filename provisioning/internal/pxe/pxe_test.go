@@ -31,6 +31,70 @@ func TestConfigRejectsInjectionAndInvalidTarget(t *testing.T) {
 	}
 }
 
+func TestFleetConfigRenderAndSeedIsolation(t *testing.T) {
+	c := testConfig()
+	c.TargetIP, c.TargetMAC, c.TargetHostname, c.DiskSerial = "", "", "", ""
+	c.SSHKeyPath = writeKey(t)
+	c.Targets = []Target{
+		{TargetIP: "192.0.2.2", TargetMAC: "02:00:00:00:00:02", TargetHostname: "labfleet-cp-01", DiskSerial: "disk-labfleet-cp-01"},
+		{TargetIP: "192.0.2.3", TargetMAC: "02:00:00:00:00:03", TargetHostname: "labfleet-worker-01", DiskSerial: "disk-labfleet-worker-01"},
+	}
+	c.Output = t.TempDir()
+	if err := os.Chmod(c.Output, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Render(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns := string(files["dnsmasq.conf"])
+	for _, want := range []string{"dhcp-host=02:00:00:00:00:02,192.0.2.2,labfleet-cp-01,infinite", "dhcp-host=02:00:00:00:00:03,192.0.2.3,labfleet-worker-01,infinite"} {
+		if !strings.Contains(dns, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(dns, "dhcp-host=02:00:00:00:00:01") {
+		t.Fatal("service host must not be a provisioning client")
+	}
+	if err := WriteRendered(c.Output, files); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(c)
+	for _, tc := range []struct {
+		ip, host, want string
+		status         int
+	}{{"192.0.2.2", "labfleet-cp-01", "labfleet-cp-01", 200}, {"192.0.2.3", "labfleet-worker-01", "labfleet-worker-01", 200}, {"192.0.2.4", "labfleet-cp-01", "", 403}} {
+		r := httptest.NewRequest("GET", "/seed/meta-data", nil)
+		r.RemoteAddr = tc.ip + ":1234"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.status {
+			t.Fatalf("%s: status %d", tc.ip, w.Code)
+		}
+		if tc.want != "" && !strings.Contains(w.Body.String(), tc.want) {
+			t.Fatalf("%s received wrong seed: %s", tc.ip, w.Body.String())
+		}
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.Targets[1].TargetIP = c.Targets[0].TargetIP },
+		func(c *Config) { c.Targets[1].TargetMAC = c.Targets[0].TargetMAC },
+		func(c *Config) { c.Targets[1].ManagementMAC = c.Targets[0].TargetMAC },
+		func(c *Config) { c.Targets[1].TargetMAC = strings.ReplaceAll(c.Targets[0].TargetMAC, ":", "-") },
+		func(c *Config) { c.Targets[1].TargetHostname = c.Targets[0].TargetHostname },
+		func(c *Config) { c.Targets[1].DiskSerial = c.Targets[0].DiskSerial },
+	} {
+		bad := c
+		bad.Targets = append([]Target(nil), c.Targets...)
+		mutate(&bad)
+		if bad.Validate() == nil {
+			t.Fatal("accepted duplicate fleet identity")
+		}
+	}
+}
+
 func TestOptionalManagementNICAndPasswordlessSudoRendering(t *testing.T) {
 	c := testConfig()
 	c.SSHKeyPath = writeKey(t)

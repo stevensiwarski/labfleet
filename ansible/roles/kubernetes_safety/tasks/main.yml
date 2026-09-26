@@ -1,0 +1,43 @@
+---
+- name: Require exact Issue 8 inventory topology before contacting guests
+  ansible.builtin.assert:
+    that:
+      - groups.get('labfleet_control_plane', []) | length == 3
+      - groups.get('labfleet_workers', []) | length == 3
+      - groups.labfleet_control_plane | intersect(groups.labfleet_workers) | length == 0
+      - groups.labfleet_nodes | sort == (groups.labfleet_control_plane + groups.labfleet_workers) | sort
+      - ansible_play_hosts_all | sort == groups.labfleet_nodes | sort
+      - labfleet_issue | default('') == 'issue8'
+      - labfleet_kubernetes_role | default('') in ['control-plane', 'worker']
+      - (inventory_hostname in groups.labfleet_control_plane) == (labfleet_kubernetes_role == 'control-plane')
+      - kubernetes_node_ip | default('') == ansible_host
+      - groups.labfleet_nodes | map('extract', hostvars, 'kubernetes_node_ip') | unique | length == 6
+    quiet: true
+    fail_msg: "Bootstrap requires exactly three owned Issue 8 control planes and three workers; do not limit the initial preflight."
+
+- name: Reuse independent inventory API and guest ownership attestation
+  ansible.builtin.include_role:
+    name: safety
+  vars:
+    safety_reject_existing_cluster: false
+
+- name: Require Issue 8 role tags and management identity
+  ansible.builtin.assert:
+    that:
+      - "'issue8' in safety_api_response.json.data.tags.split(';')"
+      - labfleet_kubernetes_role in safety_api_response.json.data.tags.split(';')
+      - >-
+        ('worker' not in safety_api_response.json.data.tags.split(';'))
+        if labfleet_kubernetes_role == 'control-plane' else
+        ('control-plane' not in safety_api_response.json.data.tags.split(';'))
+      - ansible_facts.default_ipv4.interface == 'mgmt0'
+      - ansible_facts.default_ipv4.address == kubernetes_node_ip
+      - ansible_facts.mgmt0.ipv4.address == kubernetes_node_ip
+      - kubernetes_control_plane_endpoint == hostvars[groups.labfleet_control_plane[0]].kubernetes_node_ip ~ ':6443'
+    quiet: true
+    fail_msg: "API role ownership and management-interface identity must match the cluster inventory."
+  no_log: true
+
+- name: Record Issue 8 preflight completion
+  ansible.builtin.set_fact:
+    kubernetes_safety_preflight_complete: true

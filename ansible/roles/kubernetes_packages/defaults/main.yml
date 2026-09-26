@@ -1,0 +1,3 @@
+---
+kubernetes_packages_keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+kubernetes_packages_repository: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_minor }}/deb/"

@@ -1,0 +1,317 @@
+---
+- name: Require validation settings
+  ansible.builtin.assert:
+    that:
+      - cluster_validation_workers | length >= 2
+      - cluster_validation_workers[0] != cluster_validation_workers[1]
+
+- name: Read Kubernetes node inventory
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - get
+      - nodes
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  register: cluster_validation_nodes
+  changed_when: false
+
+- name: Wait for every Kubernetes node to be Ready
+  ansible.builtin.command:
+    argv: [/usr/bin/kubectl, wait, --for=condition=Ready, nodes, --all, --timeout=300s]
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  changed_when: false
+
+- name: Re-read Kubernetes node inventory after readiness wait
+  ansible.builtin.command:
+    argv: [/usr/bin/kubectl, get, nodes, -o, json]
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  register: cluster_validation_nodes
+  changed_when: false
+
+- name: Require six Ready nodes with mgmt0 InternalIPs
+  ansible.builtin.assert:
+    that:
+      - (cluster_validation_nodes.stdout | from_json)['items'] | length == 6
+      - >-
+        (cluster_validation_nodes.stdout | from_json)['items'] | map(attribute='metadata.name') | list | sort ==
+        ((groups['labfleet_control_plane'] + groups['labfleet_workers']) | map('extract', hostvars, 'labfleet_expected_hostname') | list) | sort
+    fail_msg: Expected six Kubernetes nodes; verify readiness and their mgmt0 node IP configuration.
+
+- name: Verify each configured management IP is a node InternalIP
+  ansible.builtin.assert:
+    that:
+      - >-
+        (cluster_validation_nodes.stdout | from_json)['items']
+        | selectattr('metadata.name', 'equalto', hostvars[item].labfleet_expected_hostname)
+        | selectattr('status.addresses', 'defined')
+        | map(attribute='status.addresses') | flatten
+        | selectattr('type', 'equalto', 'InternalIP')
+        | selectattr('address', 'equalto', hostvars[item].kubernetes_node_ip)
+        | list | length == 1
+      - >-
+        (cluster_validation_nodes.stdout | from_json)['items']
+        | selectattr('metadata.name', 'equalto', hostvars[item].labfleet_expected_hostname)
+        | selectattr('metadata.labels', 'defined')
+        | selectattr('metadata.labels', 'contains', 'node-role.kubernetes.io/control-plane') | list | length ==
+        (1 if item in groups['labfleet_control_plane'] else 0)
+  loop: "{{ groups['labfleet_control_plane'] + groups['labfleet_workers'] }}"
+
+- name: Wait for system pods to become Ready
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - wait
+      - --for=condition=Ready
+      - pod
+      - --all
+      - --namespace
+      - kube-system
+      - --timeout=300s
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  changed_when: false
+
+- name: Require Cilium and CoreDNS workloads
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - get
+      - pods
+      - -n
+      - kube-system
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  register: cluster_validation_system_pods
+  changed_when: false
+
+- name: Assert Cilium and CoreDNS are present and Ready
+  ansible.builtin.assert:
+    that:
+      - >-
+        (cluster_validation_system_pods.stdout | from_json)['items']
+        | selectattr('metadata.labels.k8s-app', 'defined')
+        | selectattr('metadata.labels.k8s-app', 'equalto', 'cilium')
+        | selectattr('status.phase', 'equalto', 'Running') | list | length == 6
+      - >-
+        (cluster_validation_system_pods.stdout | from_json)['items']
+        | selectattr('metadata.name', 'match', '^cilium-operator-')
+        | selectattr('status.phase', 'equalto', 'Running') | list | length >= 1
+      - >-
+        (cluster_validation_system_pods.stdout | from_json)['items']
+        | selectattr('metadata.name', 'match', '^coredns-')
+        | selectattr('status.phase', 'equalto', 'Running') | list | length >= 1
+
+- name: Run Cilium agent status on every node
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - exec
+      - -n
+      - kube-system
+      - "{{ item.metadata.name }}"
+      - --
+      - cilium-dbg
+      - status
+      - --brief
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  loop: >-
+    {{ (cluster_validation_system_pods.stdout | from_json)['items']
+    | selectattr('metadata.labels.k8s-app', 'defined')
+    | selectattr('metadata.labels.k8s-app', 'equalto', 'cilium') | list }}
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  changed_when: false
+
+- name: Check Cilium health status
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - exec
+      - -n
+      - kube-system
+      - >-
+        {{ ((cluster_validation_system_pods.stdout | from_json)['items']
+        | selectattr('metadata.labels.k8s-app', 'defined')
+        | selectattr('metadata.labels.k8s-app', 'equalto', 'cilium') | list | first).metadata.name }}
+      - --
+      - cilium-health
+      - status
+      - --verbose
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  register: cluster_validation_cilium_health
+  until: "cluster_validation_cilium_health.stdout is search('Cluster health: +6/6 reachable')"
+  retries: 24
+  delay: 15
+  changed_when: false
+
+- name: Read etcd membership from a control-plane member
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - exec
+      - -n
+      - kube-system
+      - "etcd-{{ groups['labfleet_control_plane'][0] }}"
+      - --
+      - etcdctl
+      - --endpoints=https://127.0.0.1:2379
+      - --cacert=/etc/kubernetes/pki/etcd/ca.crt
+      - --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt
+      - --key=/etc/kubernetes/pki/etcd/healthcheck-client.key
+      - member
+      - list
+      - --write-out=json
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  register: cluster_validation_etcd_members
+  changed_when: false
+
+- name: Require a healthy etcd membership matching control-plane inventory
+  ansible.builtin.assert:
+    that:
+      - (cluster_validation_etcd_members.stdout | from_json).members | length == groups['labfleet_control_plane'] | length
+      - >-
+        (cluster_validation_etcd_members.stdout | from_json).members
+        | map(attribute='isLearner', default=false) | select('equalto', false)
+        | list | length == groups['labfleet_control_plane'] | length
+      - >-
+        (cluster_validation_etcd_members.stdout | from_json).members | map(attribute='name') | list | sort ==
+        groups['labfleet_control_plane'] | map('extract', hostvars, 'labfleet_expected_hostname') | list | sort
+
+- name: Check etcd endpoint health across the cluster
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/kubectl
+      - exec
+      - -n
+      - kube-system
+      - "etcd-{{ groups['labfleet_control_plane'][0] }}"
+      - --
+      - etcdctl
+      - --endpoints=https://127.0.0.1:2379
+      - --cacert=/etc/kubernetes/pki/etcd/ca.crt
+      - --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt
+      - --key=/etc/kubernetes/pki/etcd/healthcheck-client.key
+      - endpoint
+      - health
+      - --cluster
+  environment:
+    KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+  changed_when: false
+
+- name: Validate cross-node pod, ClusterIP, and DNS connectivity
+  when: cluster_validation_run_network | bool
+  block:
+    - name: Create validation manifest directory
+      ansible.builtin.file:
+        path: "{{ cluster_validation_manifest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Render isolated network validation pods
+      ansible.builtin.template:
+        src: validation-pods.yaml.j2
+        dest: "{{ cluster_validation_manifest_dir }}/pods.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reject pre-existing validation namespace
+      ansible.builtin.command:
+        argv: [/usr/bin/kubectl, get, namespace, "{{ cluster_validation_namespace }}"]
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      register: cluster_validation_ns
+      changed_when: false
+      failed_when: cluster_validation_ns.rc == 0 or 'NotFound' not in cluster_validation_ns.stderr
+
+    - name: Create this run's validation namespace and record its identity
+      ansible.builtin.command:
+        argv: [/usr/bin/kubectl, create, namespace, "{{ cluster_validation_namespace }}", -o, json]
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      register: cluster_validation_created_namespace
+      changed_when: true
+
+    - name: Apply temporary network validation workloads
+      ansible.builtin.command:
+        argv: [/usr/bin/kubectl, apply, -f, "{{ cluster_validation_manifest_dir }}/pods.yaml"]
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      changed_when: true
+      register: cluster_validation_apply
+
+    - name: Wait for validation pods
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/kubectl
+          - wait
+          - --for=condition=Ready
+          - pod
+          - --all
+          - -n
+          - "{{ cluster_validation_namespace }}"
+          - --timeout=180s
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      changed_when: false
+
+    - name: Test cross-node PodIP, ClusterIP, and cluster DNS from client
+      ansible.builtin.shell: >-
+        set -eu;
+        server_ip=$(/usr/bin/kubectl get pod netcheck-server -n {{ cluster_validation_namespace }} -o jsonpath='{.status.podIP}');
+        service_ip=$(/usr/bin/kubectl get service netcheck-server -n {{ cluster_validation_namespace }} -o jsonpath='{.spec.clusterIP}');
+        client_node=$(/usr/bin/kubectl get pod netcheck-client -n {{ cluster_validation_namespace }} -o jsonpath='{.spec.nodeName}');
+        server_node=$(/usr/bin/kubectl get pod netcheck-server -n {{ cluster_validation_namespace }} -o jsonpath='{.spec.nodeName}');
+        test "$client_node" != "$server_node";
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client -- wget -T 15 -qO- "http://$server_ip:8080";
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client -- wget -T 15 -qO- "http://$service_ip:8080";
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client --
+        wget -T 15 -qO- "http://netcheck-server.{{ cluster_validation_namespace }}.svc:8080";
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client -- nslookup kubernetes.default.svc.cluster.local;
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client -- nslookup archive.ubuntu.com;
+        /usr/bin/kubectl exec -n {{ cluster_validation_namespace }} netcheck-client --
+        wget -T 30 -qO /dev/null http://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      register: cluster_validation_connectivity
+      changed_when: false
+
+  always:
+    - name: Read namespace identity before cleanup
+      ansible.builtin.command:
+        argv: [/usr/bin/kubectl, get, namespace, "{{ cluster_validation_namespace }}", -o, json]
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      register: cluster_validation_cleanup_namespace
+      changed_when: false
+      when:
+        - cluster_validation_created_namespace is defined
+        - cluster_validation_created_namespace.rc | default(1) == 0
+
+    - name: Remove temporary validation namespace
+      ansible.builtin.command:
+        argv: [/usr/bin/kubectl, delete, namespace, "{{ cluster_validation_namespace }}", --ignore-not-found=true, --wait=true]
+      environment:
+        KUBECONFIG: "{{ cluster_validation_kubeconfig }}"
+      changed_when: true
+      when:
+        - cluster_validation_run_network | bool
+        - cluster_validation_created_namespace is defined
+        - cluster_validation_created_namespace.rc | default(1) == 0
+        - >-
+          (cluster_validation_cleanup_namespace.stdout | from_json).metadata.uid ==
+          (cluster_validation_created_namespace.stdout | from_json).metadata.uid

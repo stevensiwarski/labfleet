@@ -1,0 +1,22 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "v{{ kubernetes_version }}"
+controlPlaneEndpoint: "{{ kubernetes_control_plane_endpoint }}"
+networking:
+  podSubnet: "{{ kubeadm_pod_subnet }}"
+  serviceSubnet: "{{ kubeadm_service_subnet }}"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{{ kubernetes_node_ip }}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: "{{ kubeadm_containerd_socket }}"
+  kubeletExtraArgs:
+    - name: node-ip
+      value: "{{ kubernetes_node_ip }}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd

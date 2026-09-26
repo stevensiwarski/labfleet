@@ -46,3 +46,9 @@ jobs:
           tofu init -backend=false -input=false -lockfile=readonly
           tofu validate
           tofu test
+      - name: Validate six-node Kubernetes infrastructure
+        working-directory: infra/opentofu/cluster
+        run: |
+          tofu init -backend=false -input=false -lockfile=readonly
+          tofu validate
+          tofu test

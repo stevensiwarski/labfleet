@@ -1,0 +1,24 @@
+---
+- name: Attest all Issue 8 cluster members before validation
+  hosts: labfleet_nodes
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+  roles:
+    - kubernetes_safety
+
+- name: Validate cluster and temporary cross-worker workloads
+  hosts: labfleet_control_plane[0]
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    cluster_validation_run_network: true
+  pre_tasks:
+    - name: Require complete ownership preflight
+      ansible.builtin.assert:
+        that:
+          - kubernetes_safety_preflight_complete | default(false) | bool
+        quiet: true
+  roles:
+    - cluster_validation

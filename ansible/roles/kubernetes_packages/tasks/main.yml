@@ -1,0 +1,76 @@
+---
+- name: Require pinned Kubernetes package version
+  ansible.builtin.assert:
+    that:
+      - kubernetes_version is defined
+      - kubernetes_version is match('^[0-9]+[.][0-9]+[.][0-9]+$')
+      - kubernetes_minor is defined
+      - kubernetes_minor == kubernetes_version.split('.')[0] + '.' + kubernetes_version.split('.')[1]
+    fail_msg: Set kubernetes_version to a pinned patch release and kubernetes_minor to its major.minor.
+
+- name: Inspect existing Kubernetes packages
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, '-f=${Package} ${Version}\n', kubelet, kubeadm, kubectl]
+  register: kubernetes_packages_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse implicit Kubernetes package upgrades
+  ansible.builtin.assert:
+    that:
+      - >-
+        (kubernetes_packages_installed.stdout_lines
+        | reject('search', ' ' + (kubernetes_package_version | regex_escape) + '$')
+        | list | length) == 0
+      - kubernetes_packages_installed.rc in [0, 1]
+    fail_msg: Existing Kubernetes package versions differ from {{ kubernetes_package_version }}; upgrade explicitly before running this role.
+  when: kubernetes_package_version is defined
+
+- name: Ensure apt keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download Kubernetes repository signing key
+  ansible.builtin.get_url:
+    url: "{{ kubernetes_packages_repository }}Release.key"
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+
+- name: Install Kubernetes repository signing key
+  ansible.builtin.command:
+    argv: [gpg, --dearmor, --yes, --output, "{{ kubernetes_packages_keyring }}", /tmp/kubernetes-release.key]
+    creates: "{{ kubernetes_packages_keyring }}"
+
+- name: Configure Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ kubernetes_packages_keyring }}] {{ kubernetes_packages_repository }} /"
+    filename: kubernetes
+    state: present
+    update_cache: true
+
+- name: Install exact Kubernetes packages
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ kubernetes_package_version }}"
+      - "kubeadm={{ kubernetes_package_version }}"
+      - "kubectl={{ kubernetes_package_version }}"
+    state: present
+    update_cache: true
+    lock_timeout: 180
+    cache_valid_time: 3600
+
+- name: Hold Kubernetes packages at the pinned version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [kubelet, kubeadm, kubectl]
+
+- name: Enable kubelet service
+  ansible.builtin.service:
+    name: kubelet
+    enabled: true

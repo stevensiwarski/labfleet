@@ -1,0 +1,7 @@
+---
+cluster_validation_kubeconfig: /etc/kubernetes/admin.conf
+cluster_validation_workers: "{{ groups.labfleet_workers }}"
+cluster_validation_pod_cidr: 10.244.0.0/16
+cluster_validation_namespace: labfleet-validation
+cluster_validation_run_network: false
+cluster_validation_manifest_dir: /etc/labfleet/validation

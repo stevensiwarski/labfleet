@@ -1,5 +1,6 @@
 """Exercise actual role assertions and the TOML template without configuring hosts."""
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,6 +15,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoleContracts(unittest.TestCase):
+    def test_cilium_agent_count_excludes_operator_and_envoy(self):
+        agents = [{"metadata": {"name": f"cilium-{i}", "labels": {"k8s-app": "cilium"}},
+                   "status": {"phase": "Running"}} for i in range(6)]
+        other = [{"metadata": {"name": name, "labels": {"k8s-app": app}}, "status": {"phase": "Running"}}
+                 for name, app in [("cilium-operator-a", "cilium-operator"), ("cilium-envoy-a", "cilium-envoy"),
+                                   ("coredns-a", "kube-dns")]]
+        for count, accepted in [(6, True), (5, False)]:
+            result, out = self.assertion("cluster_validation", "Assert Cilium and CoreDNS are present and Ready", {
+                "cluster_validation_system_pods": {"stdout": json.dumps({"items": agents[:count] + other})},
+            })
+            self.assertEqual(result == 0, accepted, out)
+
+    def test_kubernetes_packages_reject_partial_version_drift(self):
+        for rc, output, accepted in [
+            (1, [], True),
+            (1, ["kubelet 1.35.0-1.1"], False),
+            (0, ["kubelet 1.36.4-1.1", "kubeadm 1.36.4-1.1", "kubectl 1.36.4-1.1"], True),
+        ]:
+            result, out = self.assertion("kubernetes_packages", "Refuse implicit Kubernetes package upgrades", {
+                "kubernetes_package_version": "1.36.4-1.1",
+                "kubernetes_packages_installed": {"rc": rc, "stdout_lines": output},
+            })
+            self.assertEqual(result == 0, accepted, out)
+
     def assertion(self, role, name, variables):
         tasks = yaml.safe_load((ROOT / f"roles/{role}/tasks/main.yml").read_text())
         task = copy.deepcopy(next(t for t in tasks if t["name"] == name))
