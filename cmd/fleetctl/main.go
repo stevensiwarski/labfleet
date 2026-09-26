@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/stevensiwarski/labfleet/internal/fleetctl"
 	"github.com/stevensiwarski/labfleet/internal/tofusafety"
 )
 
 func description() string {
-	return "LabFleet command-line tool (under development)"
+	return "LabFleet fleet operations CLI; use 'fleetctl help' for commands"
 }
 
 func main() {
@@ -17,8 +21,9 @@ func main() {
 		return
 	}
 	if os.Args[1] != "tofu-check" {
-		fmt.Fprintln(os.Stderr, "usage: fleetctl tofu-check -plan PATH")
-		os.Exit(2)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		os.Exit(fleetctl.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	path := ""
 	for i := 2; i < len(os.Args); i++ {
