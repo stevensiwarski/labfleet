@@ -59,7 +59,7 @@ func TestReadConfigRejectsUnsafeConfigurations(t *testing.T) {
 		"unknown default target": func(c map[string]any) { c["default_target"] = "missing" },
 		"empty VMs":              func(c map[string]any) { c["targets"].(map[string]any)["safe"].(map[string]any)["vms"] = []any{} },
 		"protected ID": func(c map[string]any) {
-			c["targets"].(map[string]any)["safe"].(map[string]any)["vms"].([]any)[0].(map[string]any)["id"] = 100930040
+			c["targets"].(map[string]any)["safe"].(map[string]any)["vms"].([]any)[0].(map[string]any)["id"] = 930040
 		},
 		"unsafe tags": func(c map[string]any) {
 			c["targets"].(map[string]any)["safe"].(map[string]any)["vms"].([]any)[0].(map[string]any)["tags"] = []string{"labfleet", "disposable", "bootstrap"}
@@ -73,9 +73,16 @@ func TestReadConfigRejectsUnsafeConfigurations(t *testing.T) {
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, c := configFixture(t)
+			if _, err := ReadConfig(writeConfig(t, c)); err != nil {
+				t.Fatalf("baseline configuration must be valid: %v", err)
+			}
 			mutate(c)
-			if _, e := ReadConfig(writeConfig(t, c)); e == nil {
+			_, e := ReadConfig(writeConfig(t, c))
+			if e == nil {
 				t.Fatal("expected rejection")
+			}
+			if name == "protected ID" && e.Error() != "protected VM" {
+				t.Fatalf("expected explicit protected-ID guard, got: %v", e)
 			}
 		})
 	}

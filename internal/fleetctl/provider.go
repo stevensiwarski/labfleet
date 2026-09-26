@@ -136,6 +136,7 @@ func (p *provider) inventory(ctx context.Context) ([]Node, error) {
 }
 
 func protectedName(name string) bool {
+	name = strings.ToLower(name)
 	return strings.Contains(name, "provisioner") || strings.Contains(name, "coding-agent")
 }
 
