@@ -1,0 +1,140 @@
+---
+- name: Require pinned Cilium release and valid network settings
+  ansible.builtin.assert:
+    that:
+      - cilium_version is match('^v?\d+\.\d+\.\d+$')
+      - cilium_management_device | length > 0
+    fail_msg: Cilium needs an explicit pinned release compatible with the kubeadm Pod CIDR.
+
+- name: Ensure Cilium configuration directory exists
+  ansible.builtin.file:
+    path: "{{ cilium_values_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure Cilium chart cache directory exists
+  ansible.builtin.file:
+    path: "{{ cilium_chart_cache | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download checksum-verified Helm binary archive
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/helm-{{ cilium_helm_version }}-linux-amd64.tar.gz"
+    dest: "{{ cilium_helm_archive }}"
+    checksum: "sha256:{{ cilium_helm_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract pinned Helm binary
+  ansible.builtin.unarchive:
+    src: "{{ cilium_helm_archive }}"
+    dest: /var/cache/labfleet
+    remote_src: true
+    creates: /var/cache/labfleet/linux-amd64/helm
+
+- name: Install pinned Helm binary
+  ansible.builtin.copy:
+    src: /var/cache/labfleet/linux-amd64/helm
+    dest: "{{ cilium_helm_binary }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download checksum-verified Cilium chart
+  ansible.builtin.get_url:
+    url: "{{ cilium_chart_url }}"
+    dest: "{{ cilium_chart_cache }}"
+    checksum: "sha256:{{ cilium_chart_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Render Cilium Helm values
+  ansible.builtin.template:
+    src: values.yaml.j2
+    dest: "{{ cilium_values_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Inspect existing Cilium Helm release
+  ansible.builtin.command:
+    argv:
+      - "{{ cilium_helm_binary }}"
+      - list
+      - --namespace
+      - "{{ cilium_namespace }}"
+      - --output
+      - json
+      - --filter
+      - "^{{ cilium_release_name }}$"
+  environment:
+    KUBECONFIG: "{{ cilium_kubeconfig }}"
+  register: cilium_release_status
+  changed_when: false
+  failed_when: cilium_release_status.rc != 0
+  no_log: true
+
+- name: Refuse to silently change an existing Cilium release version
+  ansible.builtin.assert:
+    that:
+      - >-
+        (cilium_release_status.stdout | from_json | length == 0) or
+        ((cilium_release_status.stdout | from_json)[0].chart is search(
+          'cilium-' ~ (cilium_version | regex_replace('^v', '')) ~ '$'))
+    fail_msg: Existing Cilium Helm release version differs from cilium_version; perform an explicit upgrade.
+  no_log: true
+
+- name: Install pinned Cilium Helm chart when absent
+  ansible.builtin.command:
+    argv:
+      - "{{ cilium_helm_binary }}"
+      - upgrade
+      - --install
+      - "{{ cilium_release_name }}"
+      - "{{ cilium_chart_cache }}"
+      - --namespace
+      - "{{ cilium_namespace }}"
+      - --create-namespace
+      - --values
+      - "{{ cilium_values_path }}"
+      - --wait
+      - --timeout
+      - 10m
+  environment:
+    KUBECONFIG: "{{ cilium_kubeconfig }}"
+  when: cilium_release_status.stdout | from_json | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Read installed Cilium values without exposing release metadata
+  ansible.builtin.command:
+    argv:
+      - "{{ cilium_helm_binary }}"
+      - get
+      - values
+      - "{{ cilium_release_name }}"
+      - --namespace
+      - "{{ cilium_namespace }}"
+      - --output
+      - json
+  environment:
+    KUBECONFIG: "{{ cilium_kubeconfig }}"
+  register: cilium_installed_values
+  changed_when: false
+  no_log: true
+
+- name: Refuse silently divergent Cilium configuration
+  ansible.builtin.assert:
+    that:
+      - (cilium_installed_values.stdout | from_json) == (lookup('ansible.builtin.template', 'values.yaml.j2') | from_yaml)
+    fail_msg: "Installed Cilium values differ from the pinned profile; perform a reviewed Helm upgrade rather than silently skipping drift."
+    quiet: true
+  no_log: true

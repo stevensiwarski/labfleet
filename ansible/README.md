@@ -4,6 +4,13 @@ Issue #7 prepares **disposable Ubuntu 24.04 nodes** for a future kubeadm cluster
 It does not create a cluster, install kubeadm/kubelet/Cilium, or configure the
 coding-agent, Proxmox management, or persistent provisioner.
 
+Issue #8's separate `bootstrap-cluster.yml` composes these host roles for fresh
+nodes and then builds the six-node kubeadm/Cilium cluster. See the
+[Kubernetes operator guide](../docs/kubernetes-bootstrap.md) for its distinct
+inventory, ownership checks, pinned versions, private kubeconfig and lifecycle.
+`configure-node.yml` remains a pre-cluster-only play; do not use it to manage
+existing Kubernetes members.
+
 **Status:** Issue #7 has been live validated on a freshly PXE-provisioned
 disposable Ubuntu 24.04.5 node. The first Ansible run succeeded with
 `ok=53 changed=16 failed=0`; the identical second run succeeded with
@@ -190,6 +197,7 @@ bootstrap/control system.
 - **Second run changes:** use Ansible task/handler output to locate cache expiry,
   package updates or drift; do not blanket-apply `changed_when: false` to writes.
 
-Kubeadm init/join, Kubernetes binaries/version selection, kubelet configuration,
-Cilium, cluster networking and workloads are explicitly deferred to the next
-roadmap issue. This issue does not start that work.
+Kubeadm init/join, Kubernetes binaries/version selection, kubelet configuration
+and Cilium belong to the separate Issue #8 cluster playbooks, not the Issue #7
+host-preparation play. Application workloads and later roadmap work remain out
+of scope for both host preparation and cluster bootstrap.

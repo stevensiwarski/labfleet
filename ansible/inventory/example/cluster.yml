@@ -1,0 +1,53 @@
+---
+# Documentation-only inventory: TEST-NET addresses and opt-in disabled.
+# Generate real inventory with discover-cluster.yml into an ignored/private path.
+all:
+  vars:
+    ansible_user: fleet
+    labfleet_disposable: false
+    labfleet_issue: issue8
+    labfleet_proxmox_node: example-node
+    kubernetes_control_plane_endpoint: "192.0.2.81:6443"
+  children:
+    bootstrap_control:
+      hosts: {}
+    labfleet_nodes:
+      children:
+        labfleet_control_plane:
+          vars:
+            labfleet_kubernetes_role: control-plane
+          hosts:
+            labfleet-cp-01:
+              ansible_host: 192.0.2.81
+              kubernetes_node_ip: 192.0.2.81
+              labfleet_expected_hostname: labfleet-cp-01
+              labfleet_vm_id: 930081
+            labfleet-cp-02:
+              ansible_host: 192.0.2.82
+              kubernetes_node_ip: 192.0.2.82
+              labfleet_expected_hostname: labfleet-cp-02
+              labfleet_vm_id: 930082
+            labfleet-cp-03:
+              ansible_host: 192.0.2.83
+              kubernetes_node_ip: 192.0.2.83
+              labfleet_expected_hostname: labfleet-cp-03
+              labfleet_vm_id: 930083
+        labfleet_workers:
+          vars:
+            labfleet_kubernetes_role: worker
+          hosts:
+            labfleet-worker-01:
+              ansible_host: 192.0.2.84
+              kubernetes_node_ip: 192.0.2.84
+              labfleet_expected_hostname: labfleet-worker-01
+              labfleet_vm_id: 930084
+            labfleet-worker-02:
+              ansible_host: 192.0.2.85
+              kubernetes_node_ip: 192.0.2.85
+              labfleet_expected_hostname: labfleet-worker-02
+              labfleet_vm_id: 930085
+            labfleet-worker-03:
+              ansible_host: 192.0.2.86
+              kubernetes_node_ip: 192.0.2.86
+              labfleet_expected_hostname: labfleet-worker-03
+              labfleet_vm_id: 930086

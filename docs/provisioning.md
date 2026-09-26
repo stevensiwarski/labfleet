@@ -196,6 +196,25 @@ tests instead of downloading new artifacts on each boot.
 
 ## Local configuration and credentials
 
+### Multi-target Issue #8 profile
+
+The same service can provision a fleet using a `targets` array (maximum 16).
+Each target supplies `target_ip`, `target_mac`, `management_mac`,
+`target_hostname` and `disk_serial`. Global interface/artifact/user settings are
+shared; omit the corresponding singular target fields when using the array.
+The renderer rejects duplicate addresses, hostnames, disk identities and NIC MACs
+(including cross-role MAC reuse). See the
+[six-node lifecycle](kubernetes-bootstrap.md) for generating private inputs from
+the guarded OpenTofu fleet output.
+
+One DHCP configuration contains the explicitly allowed target mappings; unknown
+clients remain ignored. HTTP selects that source address's own boot script and
+seed, while artifact access remains limited to configured clients. Seeds use
+flat private per-host filenames; URL input cannot select another node's seed.
+This retains the isolated-network trust model, not protection against an attacker
+who can spoof addresses on that network. PXE DHCP remains bound to the isolated
+interface, with no routing/NAT or management-DHCP service added.
+
 ### Optional configuration-management node profile
 
 The single-NIC, no-passwordless-sudo defaults remain unchanged. For a disposable

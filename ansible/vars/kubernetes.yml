@@ -1,0 +1,8 @@
+---
+# Deliberate shared Issue 8 release/network pins loaded by bootstrap plays.
+kubernetes_version: "1.36.4"
+kubernetes_minor: "1.36"
+kubernetes_package_version: "1.36.4-1.1"
+kubeadm_pod_subnet: 10.244.0.0/16
+kubeadm_service_subnet: 10.96.0.0/12
+kubeadm_containerd_socket: unix:///run/containerd/containerd.sock

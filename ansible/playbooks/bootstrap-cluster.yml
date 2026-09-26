@@ -1,0 +1,89 @@
+---
+- name: Attest all six nodes and prepare Kubernetes hosts
+  vars_files:
+    - ../vars/kubernetes.yml
+  hosts: labfleet_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    ansible_ssh_extra_args: >-
+      -o PreferredAuthentications=publickey -o PasswordAuthentication=no
+      -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes
+  pre_tasks:
+    - name: Verify cluster-wide ownership and role boundaries
+      ansible.builtin.import_role:
+        name: kubernetes_safety
+      tags: always
+    - name: Refuse bypassed cluster preflight
+      ansible.builtin.assert:
+        that:
+          - kubernetes_safety_preflight_complete | default(false) | bool
+        quiet: true
+    - name: Inspect existing node bootstrap state
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubernetes_join_state
+  roles:
+    - role: base
+      when: not kubernetes_join_state.stat.exists
+    - role: ssh
+      when: not kubernetes_join_state.stat.exists
+    - role: time
+      when: not kubernetes_join_state.stat.exists
+    - role: kubernetes_prereqs
+      when: not kubernetes_join_state.stat.exists
+    - role: containerd
+      when: not kubernetes_join_state.stat.exists
+    - role: kubernetes_packages
+
+- name: Bootstrap control planes in inventory order
+  vars_files:
+    - ../vars/kubernetes.yml
+  hosts: labfleet_control_plane
+  gather_facts: false
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require prior cluster preflight
+      ansible.builtin.assert:
+        that:
+          - kubernetes_safety_preflight_complete | default(false) | bool
+        quiet: true
+  roles:
+    - kubeadm_control_plane
+
+- name: Join workers after all control planes
+  vars_files:
+    - ../vars/kubernetes.yml
+  hosts: labfleet_workers
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require prior cluster preflight
+      ansible.builtin.assert:
+        that:
+          - kubernetes_safety_preflight_complete | default(false) | bool
+        quiet: true
+  roles:
+    - kubeadm_worker
+
+- name: Install networking and validate the six-node cluster
+  vars_files:
+    - ../vars/kubernetes.yml
+  hosts: labfleet_control_plane[0]
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require prior cluster preflight
+      ansible.builtin.assert:
+        that:
+          - kubernetes_safety_preflight_complete | default(false) | bool
+        quiet: true
+  roles:
+    - role: worker_labels
+    - cilium
+    - cluster_validation

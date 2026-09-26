@@ -1,0 +1,111 @@
+---
+- name: Discover disposable cluster nodes through Proxmox QGA
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    safety_validate_certs: true
+    cluster_discovery_timeout: 900
+    cluster_discovery_interval: 5
+    cluster_discovery_known_hosts: "{{ cluster_private_dir }}/known_hosts"
+    cluster_discovery_inventory: "{{ cluster_private_dir }}/inventory.json"
+    cluster_discovery_api: "{{ lookup('ansible.builtin.env', 'PROXMOX_VE_ENDPOINT') | regex_replace('/$', '') }}"
+    cluster_discovery_token: "{{ lookup('ansible.builtin.env', 'PROXMOX_VE_API_TOKEN') | regex_replace('^PVEAPIToken=', '') }}"
+  tasks:
+    - name: Validate discovery inputs
+      ansible.builtin.assert:
+        that:
+          - cluster_private_dir is match('^/')
+          - cluster_ssh_private_key_file is match('^/')
+          - cluster_fleet | length == 6
+          - cluster_fleet | map(attribute='vm_id') | map('int') | unique | list | length == 6
+          - cluster_fleet | map(attribute='name') | unique | list | length == 6
+          - >-
+            (cluster_fleet | map(attribute='mac') | map('lower') | list +
+            cluster_fleet | map(attribute='management_mac') | map('lower') | list)
+            | unique | list | length == 12
+          - cluster_fleet | selectattr('role', 'equalto', 'control-plane') | list | length == 3
+          - cluster_fleet | selectattr('role', 'equalto', 'worker') | list | length == 3
+          - (cluster_fleet | map(attribute='vm_id') | map('int') | sort | list) == [930081, 930082, 930083, 930084, 930085, 930086]
+          - lookup('ansible.builtin.env', 'PROXMOX_VE_ENDPOINT') is match('^https://[^/]+/?$')
+          - cluster_discovery_token | length > 0
+        quiet: true
+      no_log: true
+
+    - name: Create private discovery directory
+      ansible.builtin.file:
+        path: "{{ cluster_private_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Require existing SSH private key
+      ansible.builtin.stat:
+        path: "{{ cluster_ssh_private_key_file }}"
+      register: cluster_key_stat
+    - name: Validate existing SSH private key
+      ansible.builtin.assert:
+        that:
+          - cluster_key_stat.stat.exists
+          - cluster_key_stat.stat.isreg
+          - cluster_key_stat.stat.readable
+        quiet: true
+
+    - name: Initialize discovered hosts
+      ansible.builtin.set_fact:
+        cluster_discovery_discovered_hosts: []
+
+    - name: Attest, discover management IP, and pin host key for each VM
+      ansible.builtin.include_tasks: ../roles/cluster_discovery/tasks/discover-one.yml
+      loop: "{{ cluster_fleet }}"
+      loop_control:
+        loop_var: labfleet_cluster_node
+        label: "{{ labfleet_cluster_node.name }}"
+
+    - name: Require one unique management IPv4 per discovered VM
+      ansible.builtin.assert:
+        that:
+          - cluster_discovery_discovered_hosts | map(attribute='inventory_vars.ansible_host') | unique | list | length == 6
+        quiet: true
+      no_log: true
+
+    - name: Write pinned known_hosts file
+      ansible.builtin.copy:
+        dest: "{{ cluster_discovery_known_hosts }}"
+        mode: '0600'
+        content: "{{ cluster_discovery_discovered_hosts | map(attribute='known_host') | join('\n') }}\n"
+
+    - name: Assemble inventory groups and variables
+      ansible.builtin.set_fact:
+        cluster_inventory_data:
+          all:
+            vars:
+              kubernetes_control_plane_endpoint: >-
+                {{ (cluster_discovery_discovered_hosts
+                    | selectattr('labfleet_kubernetes_role', 'equalto', 'control-plane')
+                    | first).inventory_vars.kubernetes_node_ip }}:6443
+              safety_validate_certs: "{{ safety_validate_certs }}"
+            children:
+              labfleet_nodes:
+                children:
+                  labfleet_control_plane:
+                    hosts: >-
+                      {{ dict(cluster_discovery_discovered_hosts
+                         | selectattr('labfleet_kubernetes_role', 'equalto', 'control-plane')
+                         | map(attribute='inventory_hostname')
+                         | zip(cluster_discovery_discovered_hosts
+                         | selectattr('labfleet_kubernetes_role', 'equalto', 'control-plane')
+                         | map(attribute='inventory_vars'))) }}
+                  labfleet_workers:
+                    hosts: >-
+                      {{ dict(cluster_discovery_discovered_hosts
+                         | selectattr('labfleet_kubernetes_role', 'equalto', 'worker')
+                         | map(attribute='inventory_hostname')
+                         | zip(cluster_discovery_discovered_hosts
+                         | selectattr('labfleet_kubernetes_role', 'equalto', 'worker')
+                         | map(attribute='inventory_vars'))) }}
+
+    - name: Write private JSON inventory
+      ansible.builtin.copy:
+        dest: "{{ cluster_discovery_inventory }}"
+        mode: '0600'
+        content: "{{ cluster_inventory_data | to_nice_json }}\n"

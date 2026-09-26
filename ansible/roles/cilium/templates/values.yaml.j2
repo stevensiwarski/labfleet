@@ -1,0 +1,16 @@
+{{- "" -}}
+ipam:
+  mode: kubernetes
+kubeProxyReplacement: false
+routingMode: tunnel
+tunnelProtocol: vxlan
+devices:
+  - {{ cilium_management_device | to_json }}
+ipv4:
+  enabled: true
+ipv6:
+  enabled: false
+operator:
+  replicas: 1
+  rollOutPods: true
+rollOutCiliumPods: true

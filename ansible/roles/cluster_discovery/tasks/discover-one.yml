@@ -1,0 +1,173 @@
+---
+- name: Validate managed VM name, role, tags, and network MACs
+  ansible.builtin.assert:
+    that:
+      - labfleet_cluster_node.role in ['control-plane', 'worker']
+      - labfleet_cluster_node.tags is defined
+      - labfleet_cluster_node.name is match('^labfleet-')
+      - "'labfleet' in labfleet_cluster_node.tags"
+      - "'disposable' in labfleet_cluster_node.tags"
+      - "'issue8' in labfleet_cluster_node.tags"
+      - "labfleet_cluster_node.role in labfleet_cluster_node.tags"
+      - labfleet_cluster_node.mac is match('(?i)^([0-9a-f]{2}:){5}[0-9a-f]{2}$')
+      - labfleet_cluster_node.management_mac is match('(?i)^([0-9a-f]{2}:){5}[0-9a-f]{2}$')
+      - labfleet_cluster_node.mac | lower != labfleet_cluster_node.management_mac | lower
+    quiet: true
+
+- name: Read Proxmox VM configuration for ownership and NIC attestation
+  ansible.builtin.uri:
+    url: "{{ cluster_discovery_api }}/api2/json/nodes/{{ labfleet_proxmox_node }}/qemu/{{ labfleet_cluster_node.vm_id | int }}/config"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ cluster_discovery_token }}"
+    validate_certs: "{{ safety_validate_certs | bool }}"
+    return_content: true
+    follow_redirects: none
+    use_proxy: false
+    timeout: 20
+  register: cluster_discovery_vm_config
+  no_log: true
+  changed_when: false
+
+- name: Verify VM ownership tags and exact device MAC mapping
+  ansible.builtin.assert:
+    that:
+      - labfleet_cluster_node.name is match('^labfleet-')
+      - cluster_discovery_vm_config.json.data.name == labfleet_cluster_node.name
+      - "'labfleet' in (cluster_discovery_vm_config.json.data.tags | default('')).split(';')"
+      - "(cluster_discovery_vm_config.json.data.tags | default('')).split(';') | intersect(['provisioner', 'bootstrap', 'control']) | length == 0"
+      - not (cluster_discovery_vm_config.json.data.protection | default(false) | bool)
+      - "'disposable' in (cluster_discovery_vm_config.json.data.tags | default('')).split(';')"
+      - "'issue8' in (cluster_discovery_vm_config.json.data.tags | default('')).split(';')"
+      - labfleet_cluster_node.role in (cluster_discovery_vm_config.json.data.tags | default('')).split(';')
+      - cluster_discovery_vm_config.json.data.net0 is search('(?i)^(?:virtio|e1000|vmxnet3|rtl8139)=?' ~ labfleet_cluster_node.management_mac)
+      - cluster_discovery_vm_config.json.data.net1 is search('(?i)^(?:virtio|e1000|vmxnet3|rtl8139)=?' ~ labfleet_cluster_node.mac)
+    quiet: true
+  no_log: true
+
+- name: Poll QGA network interfaces for expected management MAC and IPv4
+  ansible.builtin.uri:
+    url: "{{ cluster_discovery_api }}/api2/json/nodes/{{ labfleet_proxmox_node }}/qemu/{{ labfleet_cluster_node.vm_id | int }}/agent/network-get-interfaces"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ cluster_discovery_token }}"
+    validate_certs: "{{ safety_validate_certs | bool }}"
+    return_content: true
+    follow_redirects: none
+    use_proxy: false
+    timeout: 20
+  register: cluster_discovery_interfaces
+  until: >-
+    cluster_discovery_interfaces.status == 200 and
+    (cluster_discovery_interfaces.json.data.result | default([]) | selectattr('hardware-address', 'defined')
+     | selectattr('name', 'equalto', 'mgmt0')
+     | selectattr('hardware-address', 'equalto', labfleet_cluster_node.management_mac) | list | length > 0) and
+    (cluster_discovery_interfaces.json.data.result | selectattr('hardware-address', 'defined')
+     | selectattr('name', 'equalto', 'mgmt0')
+     | selectattr('hardware-address', 'equalto', labfleet_cluster_node.management_mac)
+     | map(attribute='ip-addresses') | flatten | selectattr('ip-address-type', 'equalto', 'ipv4')
+     | rejectattr('ip-address', 'match', '^(127\\.|169\\.254\\.)') | list | length > 0)
+  retries: "{{ (cluster_discovery_timeout | int / cluster_discovery_interval | int) | int }}"
+  delay: "{{ cluster_discovery_interval | int }}"
+  no_log: true
+  changed_when: false
+
+- name: Select attested management IPv4
+  ansible.builtin.set_fact:
+    cluster_discovery_node_ip: >-
+      {{ (cluster_discovery_interfaces.json.data.result
+          | selectattr('name', 'equalto', 'mgmt0')
+          | selectattr('hardware-address', 'equalto', labfleet_cluster_node.management_mac)
+          | map(attribute='ip-addresses')
+          | flatten
+          | selectattr('ip-address-type', 'equalto', 'ipv4')
+          | rejectattr('ip-address', 'match', '^(127\\.|169\\.254\\.)')
+          | map(attribute='ip-address')
+          | first) }}
+  no_log: true
+
+- name: Request public SSH host key through QGA
+  ansible.builtin.uri:
+    url: "{{ cluster_discovery_api }}/api2/json/nodes/{{ labfleet_proxmox_node }}/qemu/{{ labfleet_cluster_node.vm_id | int }}/agent/exec"
+    method: POST
+    headers:
+      Authorization: "PVEAPIToken={{ cluster_discovery_token }}"
+    body_format: json
+    body:
+      command: ['/bin/cat', '/etc/ssh/ssh_host_ed25519_key.pub']
+    validate_certs: "{{ safety_validate_certs | bool }}"
+    return_content: true
+    follow_redirects: none
+    use_proxy: false
+    timeout: 20
+  register: cluster_discovery_exec_start
+  no_log: true
+  changed_when: false
+
+- name: Wait for QGA host-key command completion
+  ansible.builtin.uri:
+    url: >-
+      {{ cluster_discovery_api ~ '/api2/json/nodes/' ~ labfleet_proxmox_node
+         ~ '/qemu/' ~ (labfleet_cluster_node.vm_id | int)
+         ~ '/agent/exec-status?pid=' ~ cluster_discovery_exec_start.json.data.pid }}
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ cluster_discovery_token }}"
+    validate_certs: "{{ safety_validate_certs | bool }}"
+    return_content: true
+    follow_redirects: none
+    use_proxy: false
+    timeout: 20
+  register: cluster_discovery_exec_status
+  until: cluster_discovery_exec_status.json.data.exited | default(false) | bool
+  retries: "{{ (cluster_discovery_timeout | int / cluster_discovery_interval | int) | int }}"
+  delay: "{{ cluster_discovery_interval | int }}"
+  no_log: true
+  changed_when: false
+
+- name: Decode and validate QGA-provided public Ed25519 key
+  ansible.builtin.set_fact:
+    cluster_discovery_host_key_line: >-
+      {{ (cluster_discovery_exec_status.json.data['out-data'] | default('') | trim)
+         | regex_replace('^([A-Za-z0-9+/=]+)$', '\\1') }}
+  no_log: true
+
+- name: Normalize QGA key output from raw or base64 response
+  ansible.builtin.set_fact:
+    cluster_discovery_host_key_line: >-
+      {{ (cluster_discovery_host_key_line if cluster_discovery_host_key_line is search('^ssh-ed25519 ')
+          else (cluster_discovery_host_key_line | b64decode | trim)) }}
+  no_log: true
+
+- name: Validate returned key and accumulate host inventory entry
+  ansible.builtin.assert:
+    that:
+      - cluster_discovery_exec_status.json.data.exitcode | int == 0
+      - cluster_discovery_host_key_line is match('^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( .*)?$')
+    quiet: true
+  no_log: true
+
+- name: Add discovered node and pinned public host key
+  ansible.builtin.set_fact:
+    cluster_discovery_discovered_hosts: "{{ cluster_discovery_discovered_hosts + [cluster_discovery_host_entry] }}"
+  no_log: true
+  vars:
+    cluster_discovery_host_entry:
+      inventory_hostname: "{{ labfleet_cluster_node.name }}"
+      known_host: "{{ labfleet_cluster_node.name }} {{ cluster_discovery_host_key_line }}"
+      labfleet_kubernetes_role: "{{ labfleet_cluster_node.role }}"
+      inventory_vars:
+        ansible_host: "{{ cluster_discovery_node_ip }}"
+        ansible_user: "{{ labfleet_cluster_node.ansible_user | default('fleet') }}"
+        ansible_ssh_private_key_file: "{{ cluster_ssh_private_key_file }}"
+        ansible_ssh_common_args: >-
+          -o UserKnownHostsFile={{ cluster_discovery_known_hosts }}
+          -o HostKeyAlias={{ labfleet_cluster_node.name }}
+          -o StrictHostKeyChecking=yes
+        labfleet_issue: issue8
+        labfleet_kubernetes_role: "{{ labfleet_cluster_node.role }}"
+        labfleet_expected_hostname: "{{ labfleet_cluster_node.name }}"
+        labfleet_disposable: true
+        labfleet_vm_id: "{{ labfleet_cluster_node.vm_id | int }}"
+        labfleet_proxmox_node: "{{ labfleet_proxmox_node }}"
+        kubernetes_node_ip: "{{ cluster_discovery_node_ip }}"

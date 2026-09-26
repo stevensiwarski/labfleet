@@ -1,0 +1,51 @@
+---
+- name: Require worker bootstrap inputs
+  ansible.builtin.assert:
+    that:
+      - kubernetes_node_ip is defined
+      - kubernetes_control_plane_endpoint is defined
+      - kubernetes_version is defined
+      - kubernetes_package_version is defined
+
+- name: Inspect worker kubeadm state
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubeadm_worker_state_files
+  check_mode: false
+
+- name: Join worker with ephemeral configuration
+  when: not kubeadm_worker_state_files.stat.exists
+  block:
+    - name: Ensure Kubernetes configuration directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write private worker join configuration
+      ansible.builtin.template:
+        src: join-config.yaml.j2
+        dest: /etc/kubernetes/kubeadm-join.yaml
+        owner: root
+        group: root
+        mode: '0600'
+      vars:
+        kubeadm_is_control_plane: false
+        kubeadm_control_plane_join_token: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_join_token }}"
+        kubeadm_control_plane_ca_hash: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_ca_hash }}"
+        kubeadm_control_plane_certificate_key: "{{ hostvars[groups['labfleet_control_plane'][0]].kubeadm_control_plane_certificate_key | default('') }}"
+      no_log: true
+      diff: false
+
+    - name: Join worker to Kubernetes cluster
+      ansible.builtin.command:
+        argv: [kubeadm, join, --config, /etc/kubernetes/kubeadm-join.yaml]
+      no_log: true
+      changed_when: true
+  always:
+    - name: Remove worker join configuration
+      ansible.builtin.file:
+        path: /etc/kubernetes/kubeadm-join.yaml
+        state: absent

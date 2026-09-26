@@ -1,0 +1,24 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "{{ kubernetes_control_plane_endpoint }}"
+    token: "{{ kubeadm_control_plane_join_token }}"
+    caCertHashes:
+      - "{{ kubeadm_control_plane_ca_hash }}"
+{% if kubeadm_is_control_plane %}
+controlPlane:
+  certificateKey: "{{ kubeadm_control_plane_certificate_key }}"
+  localAPIEndpoint:
+    advertiseAddress: "{{ kubernetes_node_ip }}"
+    bindPort: 6443
+{% endif %}
+nodeRegistration:
+  criSocket: "{{ kubeadm_containerd_socket }}"
+  kubeletExtraArgs:
+    - name: node-ip
+      value: "{{ kubernetes_node_ip }}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd

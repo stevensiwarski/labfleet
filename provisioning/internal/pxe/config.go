@@ -18,24 +18,34 @@ import (
 )
 
 type Config struct {
-	ServiceHostname  string `json:"service_hostname"`
-	Interface        string `json:"interface"`
-	ExpectedMAC      string `json:"expected_mac"`
-	Address          string `json:"address"`
-	ServiceIP        string `json:"service_ip"`
-	TargetIP         string `json:"target_ip"`
-	Subnet           string `json:"subnet"`
-	TargetMAC        string `json:"target_mac"`
-	ManagementMAC    string `json:"management_mac,omitempty"`
-	PasswordlessSudo bool   `json:"passwordless_sudo"`
-	TargetHostname   string `json:"target_hostname"`
-	Username         string `json:"username"`
-	DiskSerial       string `json:"disk_serial"`
-	SSHKeyPath       string `json:"ssh_key_path"`
-	Artifacts        string `json:"artifacts"`
-	Output           string `json:"output"`
-	HTTPPort         int    `json:"http_port"`
-	Dnsmasq          string `json:"dnsmasq"`
+	ServiceHostname  string   `json:"service_hostname"`
+	Interface        string   `json:"interface"`
+	ExpectedMAC      string   `json:"expected_mac"`
+	Address          string   `json:"address"`
+	ServiceIP        string   `json:"service_ip"`
+	TargetIP         string   `json:"target_ip"`
+	Subnet           string   `json:"subnet"`
+	TargetMAC        string   `json:"target_mac"`
+	ManagementMAC    string   `json:"management_mac,omitempty"`
+	PasswordlessSudo bool     `json:"passwordless_sudo"`
+	TargetHostname   string   `json:"target_hostname"`
+	Username         string   `json:"username"`
+	DiskSerial       string   `json:"disk_serial"`
+	SSHKeyPath       string   `json:"ssh_key_path"`
+	Artifacts        string   `json:"artifacts"`
+	Output           string   `json:"output"`
+	HTTPPort         int      `json:"http_port"`
+	Dnsmasq          string   `json:"dnsmasq"`
+	Targets          []Target `json:"targets,omitempty"`
+}
+
+// Target identifies one isolated PXE client in a shared provisioning run.
+type Target struct {
+	TargetIP       string `json:"target_ip"`
+	TargetMAC      string `json:"target_mac"`
+	TargetHostname string `json:"target_hostname"`
+	DiskSerial     string `json:"disk_serial"`
+	ManagementMAC  string `json:"management_mac,omitempty"`
 }
 
 type Manifest struct {
@@ -66,6 +76,48 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if len(c.Targets) > 0 {
+		if len(c.Targets) > 16 {
+			return errors.New("at most 16 provisioning targets are supported")
+		}
+		if c.TargetIP != "" || c.TargetMAC != "" || c.TargetHostname != "" || c.DiskSerial != "" || c.ManagementMAC != "" {
+			return errors.New("fleet targets cannot be combined with singular target fields")
+		}
+		ips, macs, hosts, disks := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+		for i, target := range c.Targets {
+			one := c
+			one.Targets = nil
+			one.TargetIP, one.TargetMAC, one.TargetHostname, one.DiskSerial, one.ManagementMAC = target.TargetIP, target.TargetMAC, target.TargetHostname, target.DiskSerial, target.ManagementMAC
+			if err := one.validateSingle(); err != nil {
+				return fmt.Errorf("target %d: %w", i, err)
+			}
+			for _, value := range []string{target.TargetMAC, target.ManagementMAC} {
+				if value == "" {
+					continue
+				}
+				parsed, _ := net.ParseMAC(value) // validateSingle already validated each MAC.
+				canonical := parsed.String()
+				if macs[canonical] {
+					return fmt.Errorf("duplicate fleet NIC MAC %q", canonical)
+				}
+				macs[canonical] = true
+			}
+			for _, entry := range []struct {
+				name, value string
+				seen        map[string]bool
+			}{{"IP", target.TargetIP, ips}, {"hostname", target.TargetHostname, hosts}, {"disk serial", target.DiskSerial, disks}} {
+				if entry.seen[entry.value] {
+					return fmt.Errorf("duplicate target %s %q", entry.name, entry.value)
+				}
+				entry.seen[entry.value] = true
+			}
+		}
+		return nil
+	}
+	return c.validateSingle()
+}
+
+func (c Config) validateSingle() error {
 	if !dnsName.MatchString(c.ServiceHostname) || !dnsName.MatchString(c.TargetHostname) {
 		return errors.New("service and target hostnames must be labfleet-* DNS labels")
 	}
